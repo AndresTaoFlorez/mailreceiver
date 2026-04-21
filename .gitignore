@@ -1,0 +1,9 @@
+storage/
+*.db
+*.xlsx
+.env
+__pycache__/
+*.pyc
+.venv/
+
+arch.md

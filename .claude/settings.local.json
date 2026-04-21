@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m venv .venv)",
+      "Bash(.venv/Scripts/pip install:*)",
+      "Bash(.venv/Scripts/python -c \"from mailreceiver.app import app; print\\('OK -', type\\(app\\)\\)\")",
+      "Bash(timeout 5 .venv/Scripts/uvicorn mailreceiver.app:app --host 0.0.0.0 --port 8000)",
+      "Bash(timeout 5 .venv/Scripts/uvicorn main:app --reload)",
+      "Bash(.venv/Scripts/uvicorn main:app --port 8000)",
+      "Bash(disown)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:8000/schema/swagger)",
+      "Bash(kill %1)",
+      "Bash(.venv/Scripts/python -c \"from mailreceiver.app import app; print\\('OK'\\)\")",
+      "Bash(rm -f storage/emails.db)",
+      "Bash(timeout 5 .venv/Scripts/uvicorn main:app --port 8001)"
+    ]
+  }
+}

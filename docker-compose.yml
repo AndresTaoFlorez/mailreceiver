@@ -1,0 +1,13 @@
+services:
+  mailreceiver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:8010:8000"
+    environment:
+      - PORT=8000
+      - STORAGE_PATH=/app/storage
+    volumes:
+      - ./storage:/app/storage
+    restart: unless-stopped
