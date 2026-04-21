@@ -15,6 +15,10 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            cd /home/sample/tybacase_mailwindow
+            REPO_DIR=/home/sample/tybacase_mailwindow
+            if [ ! -d "$REPO_DIR" ]; then
+              git clone git@github.com:${{ github.repository }}.git "$REPO_DIR"
+            fi
+            cd "$REPO_DIR"
             git pull origin main
             docker compose up -d --build
