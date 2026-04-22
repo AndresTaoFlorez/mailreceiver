@@ -5,9 +5,9 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from mailreceiver.config import ATTACHMENTS_PATH, HTML_PATH
-from mailreceiver.database import Email, async_session
-from mailreceiver.models import EmailIn
+from api.config import ATTACHMENTS_PATH, HTML_PATH
+from api.database import Email, async_session
+from api.models import EmailIn
 
 
 async def upsert_email(email: EmailIn) -> dict:
@@ -48,7 +48,7 @@ async def upsert_email(email: EmailIn) -> dict:
     }
 
 
-async def list_emails() -> list[dict]:
+async def list_conversations() -> list[dict]:
     async with async_session() as session:
         result = await session.execute(select(Email).order_by(Email.id))
         rows = result.scalars().all()

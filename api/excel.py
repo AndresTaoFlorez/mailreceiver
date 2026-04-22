@@ -4,7 +4,7 @@ from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
 
-from mailreceiver.config import EXCEL_PATH
+from api.config import EXCEL_PATH
 
 HEADERS = ["Fecha", "De", "Asunto", "Conversation ID", "Ruta HTML", "Adjuntos"]
 
@@ -14,7 +14,7 @@ def _get_workbook() -> Workbook:
         return load_workbook(EXCEL_PATH)
     wb = Workbook()
     ws = wb.active
-    ws.title = "Emails"
+    ws.title = "conversations"
     ws.append(HEADERS)
     return wb
 

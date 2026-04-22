@@ -1,8 +1,8 @@
 services:
-  mailreceiver:
+  api:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.api
     ports:
       - "8010:8000"
     environment:
@@ -10,4 +10,21 @@ services:
       - STORAGE_PATH=/app/storage
     volumes:
       - ./storage:/app/storage
+    restart: unless-stopped
+
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    ports:
+      - "8011:8001"
+    environment:
+      - HEADLESS=1
+      - STORAGE_PATH=/app/storage
+      - OUTLOOK_USER=${OUTLOOK_USER}
+      - OUTLOOK_PASSWORD=${OUTLOOK_PASSWORD}
+      - OUTLOOK_FOLDER=${OUTLOOK_FOLDER}
+    volumes:
+      - ./storage:/app/storage
+      - ./screenshots:/app/screenshots
     restart: unless-stopped

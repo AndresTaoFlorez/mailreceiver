@@ -1,37 +1,73 @@
 from __future__ import annotations
 
 from litestar import Litestar, Request, get, post
-from litestar.di import Provide
 from litestar.status_codes import HTTP_200_OK, HTTP_201_CREATED
 
-from mailreceiver.config import ensure_dirs
-from mailreceiver.database import init_db
-from mailreceiver.excel import update_excel
-from mailreceiver.models import EmailIn
-from mailreceiver.storage import list_emails, upsert_email
+from api import config
+from api.agent_manager import AgentManager
+from api.config import ensure_dirs
+from api.database import init_db
+from api.routes.tutela_en_linea import TutelaEnLineaController
+from api.routes.justicia_xxi_web import JusticiaXxiWebController
+from agent.browser import scraping_config
+
+agent_manager = AgentManager()
 
 
-@post(
-    "/emails",
-    status_code=HTTP_201_CREATED,
-    summary="Receive an email",
-    description=(
-        "Receives an email payload, stores metadata in SQLite, saves the HTML body to disk, "
-        "decodes and saves base64 attachments, and updates the Excel summary. "
-        "If the conversation_id already exists, the record is updated instead of duplicated."
-    ),
-    tags=["emails"],
-)
-async def receive_email(data: EmailIn) -> dict:
-    record = await upsert_email(data)
-    update_excel(record)
-    return {"status": "ok", "conversation_id": record["conversation_id"]}
+# --- Config ---
+
+@get("/config", tags=["config"])
+async def get_config() -> dict:
+    return config.load_config()
 
 
-@get("/emails")
-async def get_emails() -> list[dict]:
-    return await list_emails()
+@post("/config", tags=["config"])
+async def update_config(request: Request) -> dict:
+    body = await request.json()
+    updated = config.save_config(body)
+    return {"status": "ok", "config": updated}
 
+
+# --- Scraping config ---
+
+@get("/scraping-config", tags=["config"])
+async def get_scraping_config() -> dict:
+    return scraping_config.load()
+
+
+@post("/scraping-config", tags=["config"])
+async def update_scraping_config(request: Request) -> dict:
+    body = await request.json()
+    updated = scraping_config.save(body)
+    return {"status": "ok", "config": updated}
+
+
+# --- Agent control ---
+
+@get("/agent/status", tags=["agent"])
+async def agent_status() -> dict:
+    return await agent_manager.health()
+
+
+@post("/agent/restart", tags=["agent"])
+async def agent_restart() -> dict:
+    agent_manager.restart()
+    return {"status": "ok", "message": "Agent restarted", "pid": agent_manager.pid}
+
+
+@post("/agent/stop", tags=["agent"])
+async def agent_stop() -> dict:
+    agent_manager.stop()
+    return {"status": "ok", "message": "Agent stopped"}
+
+
+@post("/agent/start", tags=["agent"])
+async def agent_start() -> dict:
+    agent_manager.start()
+    return {"status": "ok", "message": "Agent started", "pid": agent_manager.pid}
+
+
+# --- Debug ---
 
 @post(
     "/debug",
@@ -53,12 +89,36 @@ async def health() -> dict:
     return {"status": "healthy"}
 
 
+# --- Lifecycle ---
+
 async def on_startup() -> None:
     ensure_dirs()
     await init_db()
+    agent_manager.start()
 
+
+async def on_shutdown() -> None:
+    agent_manager.stop()
+
+
+from litestar.openapi import OpenAPIConfig
 
 app = Litestar(
-    route_handlers=[receive_email, get_emails, debug, health],
+    route_handlers=[
+        get_config,
+        update_config,
+        get_scraping_config,
+        update_scraping_config,
+        agent_status,
+        agent_restart,
+        agent_stop,
+        agent_start,
+        debug,
+        health,
+        TutelaEnLineaController,
+        JusticiaXxiWebController,
+    ],
     on_startup=[on_startup],
+    on_shutdown=[on_shutdown],
+    openapi_config=OpenAPIConfig(title="Mail Receiver", version="1.0.0"),
 )
