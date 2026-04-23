@@ -41,7 +41,10 @@
       "Bash(ls -la /d/Projects/tybacase_mailwindow/storage/debug_*.png)",
       "Bash(ssh:*)",
       "Bash(sshpass:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(python -c ':*)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill:*)"
     ]
   }
 }

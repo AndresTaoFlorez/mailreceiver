@@ -24,7 +24,11 @@ _PARSE_JS = """el => {
         conversation_id: el.getAttribute('data-convid') || '',
         subject: '',
         sender: '',
-        sender_email: ''
+        sender_email: '',
+        body: '',
+        tags: '',
+        to_address: '',
+        from_address: ''
     };
 
     // Sender: span whose title contains '@'
@@ -32,12 +36,15 @@ _PARSE_JS = """el => {
     if (senderEl) {
         result.sender = (senderEl.textContent || '').trim();
         result.sender_email = (senderEl.getAttribute('title') || '').trim();
+        result.from_address = result.sender_email;
     }
 
     // Subject: span with class TtcXM, or first span[title] not sender/date/action
+    // Use title attribute first (has full text), fallback to textContent
     const subjectEl = el.querySelector('span.TtcXM');
     if (subjectEl) {
-        result.subject = (subjectEl.textContent || '').trim();
+        const titleAttr = (subjectEl.getAttribute('title') || '').trim();
+        result.subject = titleAttr || (subjectEl.textContent || '').trim();
     } else {
         const actionKeywords = ['Marcar', 'Mark', 'Eliminar', 'Delete', 'Dejar', 'Pin', 'Archivar', 'Archive', 'Mover', 'Move', 'Busca'];
         const spans = el.querySelectorAll('span[title]');
@@ -83,6 +90,10 @@ async def parse_email_card(row: Locator) -> dict:
             "subject": "",
             "sender": "",
             "sender_email": "",
+            "body": "",
+            "tags": "",
+            "to_address": "",
+            "from_address": "",
             "date": {"year": None, "month": None, "day": None, "hour": None},
         }
 

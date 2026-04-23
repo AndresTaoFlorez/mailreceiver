@@ -26,8 +26,7 @@ class AgentManager:
         logger.info("Starting agent on port %d", AGENT_PORT)
         self._process = subprocess.Popen(
             [
-                sys.executable, "-m", "uvicorn",
-                "agent.core:app",
+                sys.executable, "-m", "agent",
                 "--host", AGENT_HOST,
                 "--port", str(AGENT_PORT),
             ],
