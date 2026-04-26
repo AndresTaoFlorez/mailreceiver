@@ -44,7 +44,8 @@
       "Bash(pip install:*)",
       "Bash(python -c ':*)",
       "Bash(netstat -ano)",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(wc:*)"
     ]
   }
 }

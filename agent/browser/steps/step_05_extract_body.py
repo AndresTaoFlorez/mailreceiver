@@ -3,17 +3,22 @@ step_05_extract_body.py — Opens each scraped conversation and extracts the HTM
 of the FIRST (oldest) email in the thread.
 
 Flow per conversation:
-1. Click on the conversation row in the list
-2. Wait for the reading pane to load
-3. Scroll to the bottom of the conversation (oldest message is last)
-4. Extract the HTML of that last/oldest message
-5. Store it in the conversation's 'body' field
+1. Scroll the email list to bring the conversation row into the virtual DOM
+2. Click on the conversation row
+3. Wait for the reading pane to load
+4. Scroll to the bottom of the conversation (oldest message is last)
+5. Extract the HTML of that last/oldest message
+6. Store it in the conversation's 'body' field
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from agent.browser.base_step import BaseStep, StepContext
 from shared.logger import get_logger
+
+EXTRACTED_HTML_DIR = Path(__file__).resolve().parent.parent.parent.parent / "storage" / "html"
 
 logger = get_logger("agent")
 
@@ -46,54 +51,121 @@ _SCROLL_TO_BOTTOM_JS = """() => {
 }"""
 
 
-# JS: get all individual message bodies in the conversation, return the last one (oldest)
-_EXTRACT_FIRST_MESSAGE_JS = """() => {
-    // Outlook renders each message in the thread as a separate div
-    // with role="document" or within an ItemPart container
-    const messageBodies = document.querySelectorAll(
-        'div[role="document"], div[data-testid="message-body"]'
-    );
+# JS: extract the full reading pane (subject, sender, date, attachments, body)
+# and clean Outlook UI chrome while preserving the email content faithfully
+_EXTRACT_FULL_EMAIL_JS = """() => {
+    // Build a clean email HTML from the reading pane parts,
+    // extracting only the meaningful content (sender, date, to, attachments, body)
+    // and discarding all Outlook UI chrome.
 
-    if (messageBodies.length > 0) {
-        // Last element = oldest/first message in the conversation
-        const oldest = messageBodies[messageBodies.length - 1];
-        return oldest.innerHTML.trim();
-    }
+    // --- 1. Extract sender name ---
+    let sender = '';
+    const senderEl = document.querySelector('.OZZZK, [id$="_FROM"] span span');
+    if (senderEl) sender = senderEl.textContent.trim();
 
-    // Fallback: try common Outlook body containers
-    const fallbackSelectors = [
-        'div.XbIp4',
-        'div[aria-label*="cuerpo"]',
-        'div[aria-label*="body"]',
-        'div[aria-label*="Cuerpo"]',
-        'div[aria-label*="Body"]',
-    ];
+    // --- 2. Extract date ---
+    let date = '';
+    const dateEl = document.querySelector('[data-testid="SentReceivedSavedTime"]');
+    if (dateEl) date = dateEl.textContent.trim();
 
-    for (const sel of fallbackSelectors) {
-        const els = document.querySelectorAll(sel);
-        if (els.length > 0) {
-            const oldest = els[els.length - 1];
-            if (oldest.innerHTML.trim().length > 10) {
-                return oldest.innerHTML.trim();
+    // --- 3. Extract recipients (Para:) ---
+    let recipients = '';
+    const recipientEl = document.querySelector('[data-testid="RecipientWell"]');
+    if (recipientEl) {
+        // Get all recipient names, skip the "Para:" label
+        const names = recipientEl.querySelectorAll('[class*="hoverTarget"] span[class*="1abrpkv"], [class*="hoverTarget"][aria-label]');
+        const recips = [];
+        names.forEach(n => {
+            const text = n.textContent.trim() || n.getAttribute('aria-label') || '';
+            if (text && text !== 'Para:' && text !== 'To:') recips.push(text);
+        });
+        if (recips.length > 0) recipients = recips.join(', ');
+
+        // Fallback: read from aria-label
+        if (!recipients) {
+            const editorEl = recipientEl.querySelector('[aria-label*="Para:"], [aria-label*="To:"]');
+            if (editorEl) {
+                const label = editorEl.getAttribute('aria-label') || '';
+                recipients = label.replace(/^(Para|To):\\s*/i, '').trim();
             }
         }
     }
 
-    // Last resort: largest dir=ltr/rtl div
-    const candidates = document.querySelectorAll('div[dir="ltr"], div[dir="rtl"]');
-    let best = null;
-    let bestLen = 0;
-    for (const c of candidates) {
-        if (c.innerHTML.length > bestLen) {
-            bestLen = c.innerHTML.length;
-            best = c;
+    // --- 4. Extract attachments ---
+    const attachments = [];
+    document.querySelectorAll('[id$="_ATTACHMENTS"] [role="option"]').forEach(att => {
+        const label = att.getAttribute('aria-label') || '';
+        // e.g. "Resolución04NombraSecretaria.pdf Abrir 149 KB"
+        const clean = label.replace(/\\s*Abrir\\s*/i, ' ').replace(/\\s*Open\\s*/i, ' ').trim();
+        if (clean) attachments.push(clean);
+    });
+
+    // --- 5. Extract body (oldest message) ---
+    let bodyHtml = '';
+    const messageBodies = document.querySelectorAll(
+        'div[role="document"], div[data-testid="message-body"]'
+    );
+    if (messageBodies.length > 0) {
+        const oldest = messageBodies[messageBodies.length - 1];
+        const clone = oldest.cloneNode(true);
+
+        // Clean body content
+        clone.querySelectorAll('button, .fui-Button, .qF8_5').forEach(el => el.remove());
+        clone.querySelectorAll('.R1UVb').forEach(el => {
+            if (!el.querySelector('table, img')) el.remove();
+        });
+        clone.querySelectorAll('table').forEach(t => {
+            if (t.style.transform) t.style.transform = '';
+            if (t.style.transformOrigin) t.style.transformOrigin = '';
+            t.style.width = '100%';
+            t.style.boxSizing = 'border-box';
+        });
+
+        bodyHtml = clone.innerHTML.trim();
+    } else {
+        // Fallback selectors
+        const fallbacks = ['div.XbIp4', 'div[aria-label*="cuerpo"]', 'div[aria-label*="body"]'];
+        for (const sel of fallbacks) {
+            const els = document.querySelectorAll(sel);
+            if (els.length > 0 && els[els.length - 1].innerHTML.trim().length > 10) {
+                bodyHtml = els[els.length - 1].innerHTML.trim();
+                break;
+            }
         }
     }
-    if (best && bestLen > 50) {
-        return best.innerHTML.trim();
+
+    if (!bodyHtml && !sender) return '';
+
+    // --- 6. Build clean HTML ---
+    let html = '';
+
+    // Header section
+    if (sender) {
+        html += '<div style="margin-bottom:4px;font-size:14px;font-weight:bold;">' + sender + '</div>';
+    }
+    if (recipients) {
+        html += '<div style="margin-bottom:4px;font-size:12px;opacity:0.8;">Para: ' + recipients + '</div>';
+    }
+    if (date) {
+        html += '<div style="margin-bottom:8px;font-size:12px;opacity:0.7;">' + date + '</div>';
+    }
+    if (attachments.length > 0) {
+        html += '<div style="margin-bottom:12px;font-size:12px;padding:8px;border:1px solid rgba(128,128,128,0.3);border-radius:4px;">';
+        attachments.forEach(a => {
+            html += '<div style="padding:2px 0;">📎 ' + a + '</div>';
+        });
+        html += '</div>';
     }
 
-    return '';
+    // Separator
+    if (sender || recipients || date) {
+        html += '<hr style="border:none;border-top:1px solid rgba(128,128,128,0.3);margin:12px 0;">';
+    }
+
+    // Body
+    html += bodyHtml;
+
+    return html;
 }"""
 
 
@@ -103,6 +175,34 @@ _COUNT_MESSAGES_JS = """() => {
         'div[role="document"], div[data-testid="message-body"]'
     );
     return msgs.length;
+}"""
+
+
+# JS: scroll the email list back to the top
+_SCROLL_LIST_TO_TOP_JS = """() => {
+    const virtuoso = document.querySelector('[data-virtuoso-scroller="true"]');
+    if (virtuoso) {
+        virtuoso.scrollTop = 0;
+        return 'virtuoso';
+    }
+    const listbox = document.querySelector('[role="listbox"]');
+    if (listbox) {
+        listbox.scrollTop = 0;
+        return 'listbox';
+    }
+    return null;
+}"""
+
+
+# JS: scroll the email list down by a fraction to find rows not yet in the virtual DOM
+_SCROLL_LIST_DOWN_JS = """() => {
+    const virtuoso = document.querySelector('[data-virtuoso-scroller="true"]');
+    if (virtuoso) {
+        const before = virtuoso.scrollTop;
+        virtuoso.scrollTop += virtuoso.clientHeight * 0.5;
+        return { scrolled: virtuoso.scrollTop > before, scrollTop: virtuoso.scrollTop };
+    }
+    return { scrolled: false, scrollTop: 0 };
 }"""
 
 
@@ -124,20 +224,31 @@ class ExtractBodyStep(BaseStep):
             extra={"step": self.name},
         )
 
+        # Scroll the email list back to the top before starting.
+        # Step 4 scrolled to the bottom, so most rows are gone from the virtual DOM.
+        await page.evaluate(_SCROLL_LIST_TO_TOP_JS)
+        await page.wait_for_timeout(1500)
+
         for i, conv in enumerate(conversations):
             conv_id = conv.get("conversation_id", "")
             if not conv_id:
                 continue
 
             try:
-                # Find the row in the list by data-convid
-                row = page.locator(f'[role="option"][data-convid="{conv_id}"]')
-                if await row.count() == 0:
-                    logger.debug("Row not found for conv %s, skipping", conv_id, extra={"step": self.name})
+                # Find the row — it may not be in the virtual DOM yet, so scroll to find it
+                row = await self._find_row_in_virtual_list(page, conv_id)
+                if row is None:
+                    logger.info(
+                        "[%d/%d] Row not found for conv %s after scrolling, skipping",
+                        i + 1, len(conversations), conv_id[:20],
+                        extra={"step": self.name},
+                    )
                     continue
 
                 # Click to open the conversation
-                await row.first.click()
+                await row.scroll_into_view_if_needed()
+                await page.wait_for_timeout(500)
+                await row.click()
                 await page.wait_for_timeout(2000)
 
                 # Wait for at least one message body to appear
@@ -145,10 +256,14 @@ class ExtractBodyStep(BaseStep):
                     await page.wait_for_selector(
                         'div[role="document"], div[data-testid="message-body"], '
                         'div.XbIp4, div[aria-label*="cuerpo"], div[aria-label*="body"]',
-                        timeout=8000,
+                        timeout=12000,
                     )
                 except Exception:
-                    logger.debug("Reading pane not found for conv %s", conv_id[:20], extra={"step": self.name})
+                    logger.info(
+                        "[%d/%d] Reading pane not found for conv %s",
+                        i + 1, len(conversations), conv_id[:20],
+                        extra={"step": self.name},
+                    )
                     continue
 
                 # Check how many messages are in the thread
@@ -171,17 +286,39 @@ class ExtractBodyStep(BaseStep):
                     await page.wait_for_timeout(1000)
 
                 # Extract the oldest message body HTML
-                body_html = await page.evaluate(_EXTRACT_FIRST_MESSAGE_JS)
+                body_html = await page.evaluate(_EXTRACT_FULL_EMAIL_JS)
 
                 if body_html:
                     conv["body"] = body_html
+
+                    # Save HTML to disk for inspection
+                    EXTRACTED_HTML_DIR.mkdir(parents=True, exist_ok=True)
+                    safe_id = conv_id[:40].replace("/", "_").replace("\\", "_")
+                    subject = conv.get("subject", "sin_asunto")[:50].replace("/", "_").replace("\\", "_")
+                    filename = f"{i + 1:03d}_{safe_id}_{subject}.html"
+                    html_path = EXTRACTED_HTML_DIR / filename
+                    # Detect dark mode: Outlook uses data-ogsc attributes and
+                    # rgb(255, 255, 255) text color when in dark mode
+                    lower_html = body_html.lower()
+                    is_dark = "data-ogsc" in lower_html or "rgb(255, 255, 255)" in lower_html
+                    if is_dark:
+                        bg_style = "background:#1e1e1e;color:#d4d4d4;"
+                    else:
+                        bg_style = "background:#ffffff;color:#1e1e1e;"
+                    wrapped = (
+                        '<!DOCTYPE html><html><head><meta charset="utf-8"></head>'
+                        f'<body style="{bg_style}padding:20px;font-family:sans-serif">'
+                        f'{body_html}</body></html>'
+                    )
+                    html_path.write_text(wrapped, encoding="utf-8")
+
                     logger.info(
-                        "[%d/%d] Extracted body for conv %s (%d chars, %d msgs in thread)",
-                        i + 1, len(conversations), conv_id[:20], len(body_html), msg_count,
+                        "[%d/%d] Extracted body for conv %s (%d chars, %d msgs in thread) → %s",
+                        i + 1, len(conversations), conv_id[:20], len(body_html), msg_count, filename,
                         extra={"step": self.name},
                     )
                 else:
-                    logger.debug(
+                    logger.info(
                         "[%d/%d] No body found for conv %s",
                         i + 1, len(conversations), conv_id[:20],
                         extra={"step": self.name},
@@ -204,3 +341,30 @@ class ExtractBodyStep(BaseStep):
 
         ctx.shared["conversations"] = conversations
         return ctx
+
+    async def _find_row_in_virtual_list(self, page, conv_id: str, max_scrolls: int = 30):
+        """Find a conversation row in the virtual-scrolled email list.
+
+        Outlook uses Virtuoso virtual scroll which only keeps ~15-20 rows in
+        the DOM at a time. If the row isn't visible, we scroll down incrementally
+        until we find it or exhaust attempts.
+        """
+        selector = f'[role="option"][data-convid="{conv_id}"]'
+
+        # Check if already visible
+        row = page.locator(selector)
+        if await row.count() > 0:
+            return row.first
+
+        # Not visible — scroll down incrementally to find it
+        for _ in range(max_scrolls):
+            result = await page.evaluate(_SCROLL_LIST_DOWN_JS)
+            if not result.get("scrolled"):
+                break
+            await page.wait_for_timeout(800)
+
+            row = page.locator(selector)
+            if await row.count() > 0:
+                return row.first
+
+        return None

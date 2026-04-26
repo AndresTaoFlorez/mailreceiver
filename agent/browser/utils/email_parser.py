@@ -60,6 +60,15 @@ _PARSE_JS = """el => {
         }
     }
 
+    // Tags/categories: spans with class KwNwl (Outlook category labels)
+    const tagEls = el.querySelectorAll('span.KwNwl');
+    const tags = [];
+    tagEls.forEach(t => {
+        const text = (t.textContent || '').trim();
+        if (text) tags.push(text);
+    });
+    result.tags = tags.join(', ');
+
     // Date: span whose title contains '/'
     // Format is typically "Mar 21/04/2026 19:11" or "21/04/2026 9:04"
     result.date = {year: null, month: null, day: null, hour: null};
