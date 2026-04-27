@@ -22,9 +22,17 @@ _APP_CREDENTIALS: dict[str, dict[str, str]] = {
         "outlook_user": os.getenv("DEMANDA_EN_LINEA_USER", ""),
         "outlook_password": os.getenv("DEMANDA_EN_LINEA_PASSWORD", ""),
     },
+    "firma_electronica": {
+        "outlook_user": os.getenv("FIRMA_ELECTRONICA_USER", ""),
+        "outlook_password": os.getenv("FIRMA_ELECTRONICA_PASSWORD", ""),
+    },
     "justicia_xxi_web": {
         "outlook_user": os.getenv("JUSTICIA_XXI_WEB_USER", ""),
         "outlook_password": os.getenv("JUSTICIA_XXI_WEB_PASSWORD", ""),
+    },
+    "cierres_tyba": {
+        "outlook_user": os.getenv("CIERRES_TYBA_USER", ""),
+        "outlook_password": os.getenv("CIERRES_TYBA_PASSWORD", ""),
     },
 }
 

@@ -45,7 +45,9 @@
       "Bash(python -c ':*)",
       "Bash(netstat -ano)",
       "Bash(taskkill:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(ls:*)",
+      "Bash(python:*)"
     ]
   }
 }

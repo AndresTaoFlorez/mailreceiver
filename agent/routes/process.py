@@ -19,6 +19,7 @@ class ProcessRequest(BaseModel):
     application: str = Field(description="Application key from config")
     folder: str = Field(description="Outlook folder name")
     unread_only: bool = Field(default=False, description="Filter unread conversations only")
+    extraction_mode: str = Field(default="latest", description="'latest', 'oldest', or 'full'")
 
 
 @post("/process")
@@ -52,7 +53,11 @@ async def process_handler(data: ProcessRequest, request: Request) -> dict:
         # Scrape
         scrape_ctx = StepContext(
             page=page,
-            shared={"folder": data.folder, "unread_only": data.unread_only},
+            shared={
+                "folder": data.folder,
+                "unread_only": data.unread_only,
+                "extraction_mode": data.extraction_mode,
+            },
         )
         scrape_results = await StepPipeline(build_scrape_pipeline()).run(scrape_ctx)
 

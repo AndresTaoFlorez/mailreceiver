@@ -46,7 +46,7 @@ _PARSE_JS = """el => {
         const titleAttr = (subjectEl.getAttribute('title') || '').trim();
         result.subject = titleAttr || (subjectEl.textContent || '').trim();
     } else {
-        const actionKeywords = ['Marcar', 'Mark', 'Eliminar', 'Delete', 'Dejar', 'Pin', 'Archivar', 'Archive', 'Mover', 'Move', 'Busca'];
+        const actionKeywords = ['Marcar', 'Mark', 'Eliminar', 'Delete', 'Dejar', 'Pin', 'Archivar', 'Archive', 'Mover', 'Move', 'Busca', 'Resumir', 'Summarize', 'Responder', 'Reply', 'Reenviar', 'Forward'];
         const spans = el.querySelectorAll('span[title]');
         for (const sp of spans) {
             const title = sp.getAttribute('title') || '';

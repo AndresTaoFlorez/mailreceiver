@@ -53,10 +53,29 @@ _SCROLL_TO_BOTTOM_JS = """() => {
 
 # JS: extract the full reading pane (subject, sender, date, attachments, body)
 # and clean Outlook UI chrome while preserving the email content faithfully
-_EXTRACT_FULL_EMAIL_JS = """() => {
+_EXTRACT_FULL_EMAIL_JS = """(mode) => {
+    // mode: 'latest' (newest email), 'oldest' (first email), 'full' (all emails)
     // Build a clean email HTML from the reading pane parts,
     // extracting only the meaningful content (sender, date, to, attachments, body)
     // and discarding all Outlook UI chrome.
+
+    // --- 0. Extract subject ---
+    let subject = '';
+    const subjectEl = document.querySelector('[id$="_SUBJECT"], [aria-labelledby*="SUBJECT"]');
+    if (subjectEl) {
+        // The subject heading may reference another element via aria-labelledby
+        const labelledBy = subjectEl.getAttribute('aria-labelledby') || '';
+        if (labelledBy) {
+            const labelEl = document.getElementById(labelledBy);
+            if (labelEl) subject = labelEl.textContent.trim();
+        }
+        if (!subject) subject = subjectEl.textContent.trim();
+    }
+    // Fallback: conversation subject in the header
+    if (!subject) {
+        const convSubject = document.querySelector('[id*="CONV_"][id$="_SUBJECT"]');
+        if (convSubject) subject = convSubject.textContent.trim();
+    }
 
     // --- 1. Extract sender name ---
     let sender = '';
@@ -100,19 +119,17 @@ _EXTRACT_FULL_EMAIL_JS = """() => {
         if (clean) attachments.push(clean);
     });
 
-    // --- 5. Extract body (oldest message) ---
+    // --- 5. Extract body based on mode ---
     let bodyHtml = '';
     const messageBodies = document.querySelectorAll(
         'div[role="document"], div[data-testid="message-body"]'
     );
-    if (messageBodies.length > 0) {
-        const oldest = messageBodies[messageBodies.length - 1];
-        const clone = oldest.cloneNode(true);
 
-        // Clean body content
-        clone.querySelectorAll('button, .fui-Button, .qF8_5').forEach(el => el.remove());
-        clone.querySelectorAll('.R1UVb').forEach(el => {
-            if (!el.querySelector('table, img')) el.remove();
+    function cleanMessageClone(el) {
+        const clone = el.cloneNode(true);
+        clone.querySelectorAll('button, .fui-Button, .qF8_5').forEach(e => e.remove());
+        clone.querySelectorAll('.R1UVb').forEach(e => {
+            if (!e.querySelector('table, img')) e.remove();
         });
         clone.querySelectorAll('table').forEach(t => {
             if (t.style.transform) t.style.transform = '';
@@ -120,11 +137,38 @@ _EXTRACT_FULL_EMAIL_JS = """() => {
             t.style.width = '100%';
             t.style.boxSizing = 'border-box';
         });
+        return clone.innerHTML.trim();
+    }
 
-        bodyHtml = clone.innerHTML.trim();
+    if (messageBodies.length > 0) {
+        if (mode === 'full') {
+            // All messages, newest first
+            const parts = [];
+            for (let i = 0; i < messageBodies.length; i++) {
+                const part = cleanMessageClone(messageBodies[i]);
+                if (part) parts.push(part);
+            }
+            bodyHtml = parts.join('<hr style="border:none;border-top:2px solid rgba(128,128,128,0.3);margin:20px 0;">');
+        } else if (mode === 'oldest') {
+            bodyHtml = cleanMessageClone(messageBodies[messageBodies.length - 1]);
+        } else {
+            // 'latest' (default) — first in DOM is the newest
+            bodyHtml = cleanMessageClone(messageBodies[0]);
+        }
     } else {
-        // Fallback selectors
-        const fallbacks = ['div.XbIp4', 'div[aria-label*="cuerpo"]', 'div[aria-label*="body"]'];
+        // Fallback selectors — progressively broader to catch system/notification emails
+        const fallbacks = [
+            'div.XbIp4',
+            'div[aria-label*="cuerpo"]',
+            'div[aria-label*="body"]',
+            'div[aria-label*="mensaje"]',
+            'div[aria-label*="message"]',
+            'div[data-testid="reading-pane-content"]',
+            'div[role="main"] div[class*="body"]',
+            'div[role="main"] div[class*="Body"]',
+            'div[role="complementary"] div[class*="body"]',
+            'div[role="complementary"] div[class*="Body"]',
+        ];
         for (const sel of fallbacks) {
             const els = document.querySelectorAll(sel);
             if (els.length > 0 && els[els.length - 1].innerHTML.trim().length > 10) {
@@ -132,14 +176,42 @@ _EXTRACT_FULL_EMAIL_JS = """() => {
                 break;
             }
         }
+
+        // Last resort: grab the entire reading pane content area
+        if (!bodyHtml) {
+            const paneSelectors = [
+                'div[role="main"]',
+                'div[role="complementary"]',
+                'div[data-app-section="ConversationContainer"]',
+            ];
+            for (const sel of paneSelectors) {
+                const pane = document.querySelector(sel);
+                if (pane && pane.innerHTML.trim().length > 50) {
+                    const clone = pane.cloneNode(true);
+                    // Remove toolbar/header chrome, keep only content
+                    clone.querySelectorAll(
+                        'button, [role="toolbar"], [role="menubar"], [role="banner"], '
+                        + '.fui-Button, [data-testid="reading-pane-header"]'
+                    ).forEach(el => el.remove());
+                    const cleaned = clone.innerHTML.trim();
+                    if (cleaned.length > 50) {
+                        bodyHtml = cleaned;
+                        break;
+                    }
+                }
+            }
+        }
     }
 
-    if (!bodyHtml && !sender) return '';
+    if (!bodyHtml && !sender) return {html: '', to_address: ''};
 
     // --- 6. Build clean HTML ---
     let html = '';
 
     // Header section
+    if (subject) {
+        html += '<div style="margin-bottom:8px;font-size:16px;font-weight:bold;">' + subject + '</div>';
+    }
     if (sender) {
         html += '<div style="margin-bottom:4px;font-size:14px;font-weight:bold;">' + sender + '</div>';
     }
@@ -165,7 +237,7 @@ _EXTRACT_FULL_EMAIL_JS = """() => {
     // Body
     html += bodyHtml;
 
-    return html;
+    return {html: html, to_address: recipients};
 }"""
 
 
@@ -245,10 +317,15 @@ class ExtractBodyStep(BaseStep):
                     )
                     continue
 
-                # Click to open the conversation
+                # Click on the subject area to open the conversation
+                # Avoid clicking on tag/category spans (.KwNwl) which open filters
                 await row.scroll_into_view_if_needed()
                 await page.wait_for_timeout(500)
-                await row.click()
+                subject_el = row.locator("span.TtcXM").first
+                if await subject_el.count() > 0:
+                    await subject_el.click()
+                else:
+                    await row.click(position={"x": 200, "y": 10})
                 await page.wait_for_timeout(2000)
 
                 # Wait for at least one message body to appear
@@ -274,8 +351,10 @@ class ExtractBodyStep(BaseStep):
                     extra={"step": self.name},
                 )
 
-                # Scroll to bottom to reach the first/oldest message
-                if msg_count > 1:
+                extraction_mode = ctx.shared.get("extraction_mode", "latest")
+
+                # Scroll to bottom only when we need older messages
+                if msg_count > 1 and extraction_mode in ("oldest", "full"):
                     for _ in range(5):
                         scrolled = await page.evaluate(_SCROLL_TO_BOTTOM_JS)
                         if not scrolled:
@@ -285,8 +364,13 @@ class ExtractBodyStep(BaseStep):
                     # Extra wait for content to render after scroll
                     await page.wait_for_timeout(1000)
 
-                # Extract the oldest message body HTML
-                body_html = await page.evaluate(_EXTRACT_FULL_EMAIL_JS)
+                # Extract body HTML + metadata based on extraction_mode
+                result = await page.evaluate(_EXTRACT_FULL_EMAIL_JS, extraction_mode)
+                body_html = result.get("html", "") if isinstance(result, dict) else result
+                to_address = result.get("to_address", "") if isinstance(result, dict) else ""
+
+                if to_address:
+                    conv["to_address"] = to_address
 
                 if body_html:
                     conv["body"] = body_html

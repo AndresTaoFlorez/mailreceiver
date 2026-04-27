@@ -9,10 +9,14 @@ from api.config import ensure_dirs
 from api.database import init_db
 from api.routes.tutela_en_linea import TutelaEnLineaController
 from api.routes.justicia_xxi_web import JusticiaXxiWebController
+from api.routes.cierres_tyba import CierresTybaController
+from api.routes.demanda_en_linea import DemandaEnLineaController
+from api.routes.firma_electronica import FirmaElectronicaController
 from api.routes.especialist import EspecialistController
-from api.routes.folder_config import FolderConfigController
-from api.routes.assignment import AssignmentController
 from api.routes.tickets import TicketsController
+from api.routes.applications import ApplicationController
+from api.routes.coordinator import CoordinatorController
+from api.routes.dispatch import DispatchController
 from agent.browser import scraping_config
 
 agent_manager = AgentManager()
@@ -121,10 +125,14 @@ app = Litestar(
         health,
         TutelaEnLineaController,
         JusticiaXxiWebController,
+        CierresTybaController,
+        DemandaEnLineaController,
+        FirmaElectronicaController,
         EspecialistController,
-        FolderConfigController,
-        AssignmentController,
         TicketsController,
+        ApplicationController,
+        CoordinatorController,
+        DispatchController,
     ],
     on_startup=[on_startup],
     on_shutdown=[on_shutdown],

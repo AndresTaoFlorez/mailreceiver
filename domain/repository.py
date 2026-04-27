@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from domain.models import Email
+from domain.models import Email, Application
 from domain.schemas import ScrapedEmail
 from shared.logger import get_logger
 
@@ -35,6 +35,7 @@ async def save_conversations(
             "id": uuid.uuid4(),
             "conversation_id": e.conversation_id,
             "app": app,
+            "application_code": app,
             "folder": folder,
             "subject": e.subject,
             "sender": e.sender,
@@ -54,6 +55,11 @@ async def save_conversations(
 
     if not rows:
         return 0
+
+    # Ensure the application exists (auto-create if first scrape for this app)
+    app_stmt = pg_insert(Application).values(code=app, name=app)
+    app_stmt = app_stmt.on_conflict_do_nothing(index_elements=["code"])
+    await session.execute(app_stmt)
 
     stmt = pg_insert(Email).values(rows)
     stmt = stmt.on_conflict_do_update(
@@ -76,28 +82,82 @@ async def save_conversations(
     return upserted
 
 
+# String columns on Email that can be used with the filter parameter
+_FILTERABLE_FIELDS: dict[str, any] = {
+    "body": Email.body,
+    "tags": Email.tags,
+    "subject": Email.subject,
+    "sender": Email.sender,
+    "sender_email": Email.sender_email,
+    "to_address": Email.to_address,
+    "from_address": Email.from_address,
+    "conversation_id": Email.conversation_id,
+}
+
+
+def _apply_field_filters(q, filters: list[str]):
+    """Apply field presence/absence filters to a query.
+
+    Each filter is a field name (has value) or !field (empty/null).
+    Example: ["tags", "!body"] → has tags AND body is empty.
+    """
+    for f in filters:
+        negate = f.startswith("!")
+        field_name = f.lstrip("!")
+        col = _FILTERABLE_FIELDS.get(field_name)
+        if col is None:
+            continue
+        if negate:
+            q = q.where((col == "") | (col.is_(None)))
+        else:
+            q = q.where(col != "").where(col.is_not(None))
+    return q
+
+
 async def get_conversations(
     session: AsyncSession,
     app: str,
     folder: str | None = None,
     limit: int = 100,
     offset: int = 0,
+    filters: list[str] | None = None,
+    conversation_ids: list[str] | None = None,
+    ids: list[uuid.UUID] | None = None,
 ) -> list[Email]:
     """Fetch stored conversations filtered by app and optional folder."""
     q = select(Email).where(Email.app == app)
     if folder:
         q = q.where(Email.folder == folder)
+    if ids:
+        q = q.where(Email.id.in_(ids))
+    if conversation_ids:
+        q = q.where(or_(*(Email.conversation_id.like(f"{cid}%") for cid in conversation_ids)))
+    if filters:
+        q = _apply_field_filters(q, filters)
     q = q.order_by(Email.created_at.desc()).limit(limit).offset(offset)
     result = await session.execute(q)
     return list(result.scalars().all())
 
 
-async def count_conversations(session: AsyncSession, app: str, folder: str | None = None) -> int:
+async def count_conversations(
+    session: AsyncSession,
+    app: str,
+    folder: str | None = None,
+    filters: list[str] | None = None,
+    conversation_ids: list[str] | None = None,
+    ids: list[uuid.UUID] | None = None,
+) -> int:
     """Count stored conversations for an app/folder."""
     from sqlalchemy import func
     q = select(func.count(Email.id)).where(Email.app == app)
     if folder:
         q = q.where(Email.folder == folder)
+    if ids:
+        q = q.where(Email.id.in_(ids))
+    if conversation_ids:
+        q = q.where(or_(*(Email.conversation_id.like(f"{cid}%") for cid in conversation_ids)))
+    if filters:
+        q = _apply_field_filters(q, filters)
     result = await session.execute(q)
     return result.scalar() or 0
 

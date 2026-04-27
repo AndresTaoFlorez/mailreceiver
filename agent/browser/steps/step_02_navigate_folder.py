@@ -20,12 +20,8 @@ class NavigateFolderStep(BaseStep):
 
         logger.info("Navigating to folder '%s'", folder, extra={"step": self.name})
 
-        # Always reload to a clean state — prevents stale DOM from previous scrape
-        await page.goto(OUTLOOK_MAIL_URL, wait_until="domcontentloaded")
-        await page.wait_for_timeout(2000)
-
-        # Wait for the folder pane to be ready
-        await page.wait_for_selector('[role="tree"], [role="navigation"]', timeout=20000)
+        # Wait for the folder pane, retrying with reload if Outlook's SPA is slow
+        await self._wait_for_folder_pane(page)
 
         # Try multiple selector strategies for the folder name
         selectors = [
@@ -62,6 +58,35 @@ class NavigateFolderStep(BaseStep):
             extra={"step": self.name},
         )
         return ctx
+
+    async def _wait_for_folder_pane(self, page, max_retries: int = 3) -> None:
+        """Navigate to Outlook mail and wait for the folder tree to render.
+
+        Outlook's SPA sometimes takes long to hydrate after navigation.
+        If the folder pane doesn't appear, reload and retry.
+        """
+        from playwright.async_api import TimeoutError as PlaywrightTimeout
+
+        for attempt in range(1, max_retries + 1):
+            await page.goto(OUTLOOK_MAIL_URL, wait_until="domcontentloaded")
+            await page.wait_for_timeout(2000)
+            try:
+                await page.wait_for_selector(
+                    '[role="tree"], [role="navigation"]', timeout=20000,
+                )
+                return
+            except PlaywrightTimeout:
+                if attempt < max_retries:
+                    logger.warning(
+                        "Folder pane not found (attempt %d/%d), reloading...",
+                        attempt, max_retries, extra={"step": self.name},
+                    )
+                    await page.reload(wait_until="domcontentloaded")
+                    await page.wait_for_timeout(3000)
+                else:
+                    raise TimeoutError(
+                        f"Folder pane did not appear after {max_retries} attempts"
+                    )
 
     async def _extract_folder_unread_count(self, page, folder: str) -> int | None:
         """Extract the unread count from the folder treeitem's title attribute.

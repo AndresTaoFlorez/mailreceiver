@@ -45,6 +45,22 @@ async def get_level_for_folder(
     return result.scalar_one_or_none()
 
 
+async def get_folders_for_level(
+    session: AsyncSession,
+    application: str,
+    level: int,
+) -> list[str]:
+    """Return folder names mapped to a specific level for an application."""
+    q = (
+        select(FolderConfig.folder_name)
+        .where(FolderConfig.application == application)
+        .where(FolderConfig.level == level)
+        .where(FolderConfig.active.is_(True))
+    )
+    result = await session.execute(q)
+    return list(result.scalars().all())
+
+
 async def create_folder_config(
     session: AsyncSession,
     folder_name: str,
@@ -56,6 +72,7 @@ async def create_folder_config(
         folder_name=folder_name,
         level=level,
         application=application,
+        application_code=application,
     )
     session.add(row)
     await session.commit()
