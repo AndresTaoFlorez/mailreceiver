@@ -4,18 +4,13 @@ services:
       context: .
       dockerfile: Dockerfile.api
     ports:
-      - "${API_HOST_PORT:-8010}:${PORT:-8000}"
+      - "${PORT:-8020}:${PORT:-8020}"
     environment:
-      - PORT=${PORT:-8000}
+      - PORT=${PORT:-8020}
       - AGENT_HOST=agent
-      - AGENT_PORT=${AGENT_PORT:-8001}
+      - AGENT_PORT=${AGENT_PORT:-8021}
       - STORAGE_PATH=/app/storage
-      - PG_HOST=${PG_HOST}
-      - PG_PORT=${PG_PORT:-5432}
-      - PG_USER=${PG_USER}
-      - PG_PASSWORD=${PG_PASSWORD}
-      - PG_DATABASE=${PG_DATABASE}
-      - MISSAQUEST_URL=${MISSAQUEST_URL:-http://localhost:8010}
+      - MISSAQUEST_URL=${MISSAQUEST_URL}
     env_file:
       - .env
     volumes:
@@ -29,9 +24,9 @@ services:
       context: .
       dockerfile: Dockerfile.agent
     ports:
-      - "${AGENT_HOST_PORT:-8011}:${AGENT_PORT:-8001}"
+      - "${AGENT_PORT:-8021}:${AGENT_PORT:-8021}"
     environment:
-      - PORT=${AGENT_PORT:-8001}
+      - AGENT_PORT=${AGENT_PORT:-8021}
       - STORAGE_PATH=/app/storage
       - HEADLESS=${HEADLESS:-1}
     env_file:

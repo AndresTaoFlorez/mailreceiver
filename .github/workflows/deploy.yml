@@ -21,4 +21,26 @@ jobs:
             fi
             cd "$REPO_DIR"
             git pull origin main
+
+            printf '%s\n' \
+              'PORT=${{ secrets.PORT }}' \
+              'AGENT_PORT=${{ secrets.AGENT_PORT }}' \
+              'PG_HOST=${{ secrets.SSH_HOST }}' \
+              'PG_PORT=5432' \
+              'PG_USER=${{ secrets.PG_USER }}' \
+              'PG_PASSWORD=${{ secrets.PG_PASSWORD }}' \
+              'PG_DATABASE=${{ secrets.PG_DATABASE }}' \
+              'MISSAQUEST_URL=${{ secrets.MISSAQUEST_URL }}' \
+              'TUTELA_EN_LINEA_USER=${{ secrets.TUTELA_EN_LINEA_USER }}' \
+              'TUTELA_EN_LINEA_PASSWORD=${{ secrets.TUTELA_EN_LINEA_PASSWORD }}' \
+              'DEMANDA_EN_LINEA_USER=${{ secrets.DEMANDA_EN_LINEA_USER }}' \
+              'DEMANDA_EN_LINEA_PASSWORD=${{ secrets.DEMANDA_EN_LINEA_PASSWORD }}' \
+              'FIRMA_ELECTRONICA_USER=${{ secrets.FIRMA_ELECTRONICA_USER }}' \
+              'FIRMA_ELECTRONICA_PASSWORD=${{ secrets.FIRMA_ELECTRONICA_PASSWORD }}' \
+              'JUSTICIA_XXI_WEB_USER=${{ secrets.JUSTICIA_XXI_WEB_USER }}' \
+              'JUSTICIA_XXI_WEB_PASSWORD=${{ secrets.JUSTICIA_XXI_WEB_PASSWORD }}' \
+              'CIERRES_TYBA_USER=${{ secrets.CIERRES_TYBA_USER }}' \
+              'CIERRES_TYBA_PASSWORD=${{ secrets.CIERRES_TYBA_PASSWORD }}' \
+              > .env
+
             docker compose up -d --build

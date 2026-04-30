@@ -2,46 +2,39 @@
 
 ## Ports
 
-All ports are configured via `.env`. Change these if defaults conflict with other apps on the server:
+Configured via `.env`. Change if those ports are taken on the server:
 
 ```env
-PORT=8020               # API internal port (inside process/container)
-AGENT_PORT=8021         # Agent internal port
-
-API_HOST_PORT=8020      # Host port exposed by Docker (external)
-AGENT_HOST_PORT=8021    # Host port exposed by Docker (external)
+PORT=8020        # API port (used both inside the container and on the host)
+AGENT_PORT=8021  # Agent port (same)
 ```
 
-## Docker (recommended for production)
+## Docker (production)
 
 ```bash
 docker compose up -d --build
 ```
 
-- API listens on `API_HOST_PORT` externally, `PORT` internally.
-- Agent listens on `AGENT_HOST_PORT` externally, `AGENT_PORT` internally.
-- API talks to the agent via service name `agent` (Docker DNS), not localhost.
-- `MANAGE_AGENT=false` is set automatically in `Dockerfile.api` — the API does NOT spawn the agent as a subprocess; the agent container is already running.
+- API on `PORT`, Agent on `AGENT_PORT`.
+- API talks to agent via Docker service name `agent` (not localhost).
+- `MANAGE_AGENT=false` is set in `Dockerfile.api` — the API does not spawn the agent as a subprocess; the agent container handles that.
 
 ## CI/CD
 
 GitHub Actions on push to `main`:
-
 1. SSH to the Linode droplet
 2. `git pull`
-3. `docker compose up -d --build`
+3. Writes `.env` from GitHub Secrets
+4. `docker compose up -d --build`
 
 Remote path: `/home/sample/tybacase_mailwindow`
 
-## Local development (without Docker)
+## Local development
 
 ```bash
-# Activate venv
-.venv\Scripts\activate        # Windows
-source .venv/bin/activate     # Linux/Mac
+.venv\Scripts\activate
 
-# Start — reads port from litestar.toml (PORT=8020)
-# Agent auto-starts on AGENT_PORT=8021 as a subprocess
+# Reads litestar.toml → port 8020, agent auto-starts on 8021
 litestar run
 
 # Or explicitly:
@@ -51,35 +44,40 @@ python -m litestar --app api.presentation.app:app run --host 0.0.0.0 --port 8020
 python -m agent --port 8021 --reload
 ```
 
-`litestar.toml` sets `port = 8020` and `host = "0.0.0.0"` so the short `litestar run` command just works.
+**Windows note**: `agent/__main__.py` sets `WindowsProactorEventLoopPolicy` required by Playwright. Do not use `uvicorn agent.core:app` directly on Windows.
 
-**Windows note**: `agent/__main__.py` sets `WindowsProactorEventLoopPolicy` required by Playwright.
-Do NOT use `uvicorn agent.core:app` directly on Windows.
+## GitHub Secrets required
 
-## Environment variables (.env)
+| Secret | Description |
+|---|---|
+| `SSH_HOST` | Droplet IP |
+| `SSH_USER` | SSH user |
+| `SSH_KEY` | SSH private key |
+| `PORT` | API port (e.g. `8020`) |
+| `AGENT_PORT` | Agent port (e.g. `8021`) |
+| `PG_USER` | PostgreSQL user |
+| `PG_PASSWORD` | PostgreSQL password |
+| `PG_DATABASE` | PostgreSQL database name |
+| `MISSAQUEST_URL` | Missaquest service URL |
+| `TUTELA_EN_LINEA_USER` | Outlook user |
+| `TUTELA_EN_LINEA_PASSWORD` | Outlook password |
+| `DEMANDA_EN_LINEA_USER` | Outlook user |
+| `DEMANDA_EN_LINEA_PASSWORD` | Outlook password |
+| `FIRMA_ELECTRONICA_USER` | Outlook user |
+| `FIRMA_ELECTRONICA_PASSWORD` | Outlook password |
+| `JUSTICIA_XXI_WEB_USER` | Outlook user |
+| `JUSTICIA_XXI_WEB_PASSWORD` | Outlook password |
+| `CIERRES_TYBA_USER` | Outlook user |
+| `CIERRES_TYBA_PASSWORD` | Outlook password |
 
-| Variable | Description | Default |
-|---|---|---|
-| `PORT` | API listening port | `8020` |
-| `AGENT_PORT` | Agent listening port | `8021` |
-| `API_HOST_PORT` | Docker host port for API | `8020` |
-| `AGENT_HOST_PORT` | Docker host port for Agent | `8021` |
-| `AGENT_HOST` | Host where agent runs | `localhost` |
-| `MANAGE_AGENT` | `true` = API spawns agent subprocess (local dev); `false` = separate container (Docker) | `true` |
-| `PG_HOST` / `PG_PORT` / `PG_USER` / `PG_PASSWORD` / `PG_DATABASE` | PostgreSQL connection | — |
-| `MISSAQUEST_URL` | URL of the Missaquest service | — |
+`PG_HOST` reuses `SSH_HOST` (same server). `PG_PORT` is hardcoded to `5432`.
 
 ## Migrations
 
-Run manually against PostgreSQL (in order):
+Run manually against PostgreSQL in order:
 
 ```
-001_initial.sql
-002_...
-003_workload_dispatch.sql    — Workload dispatch tables + application_code FKs
-004_drop_extraction_mode.sql — Remove extraction_mode from folder_config
-005_specialist_folder.sql    — specialist_folders table
-006_conversation_level.sql   — level field on conversations
-007_uuid_fks.sql             — UUID FKs on assignments, work_windows, balance_snapshots
-008_analyst_folders.sql      — Merge specialist_folders into folder_config; add especialist_id
+001–006  — initial schema, workload dispatch, folder config, conversations level
+007_uuid_fks.sql         — UUID FKs on assignments, work_windows, balance_snapshots
+008_analyst_folders.sql  — Merge specialist_folders into folder_config
 ```
