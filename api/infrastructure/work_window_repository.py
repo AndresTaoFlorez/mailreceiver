@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -93,10 +94,21 @@ async def close_work_window(session: AsyncSession, window_id: uuid.UUID) -> bool
     return True
 
 
-def is_window_active_now(window: WorkWindow, now: datetime) -> bool:
-    """Check if a work window covers the given datetime based on its JSONB schedule."""
-    date_key = now.strftime("%Y-%m-%d")
-    time_str = now.strftime("%H:%M")
+def is_window_active_now(window: WorkWindow, now: datetime, timezone: str = "America/Bogota") -> bool:
+    """Check if a work window covers the given datetime.
+
+    Schedule strings (date keys and HH:MM times) are interpreted in the given
+    timezone (default: America/Bogota). Pass `now` in any tz — it is converted
+    before comparison.
+
+    If schedule is empty ({}) the window is treated as always-on.
+    """
+    if not window.schedule:
+        return window.active
+
+    local_now = now.astimezone(ZoneInfo(timezone))
+    date_key = local_now.strftime("%Y-%m-%d")
+    time_str = local_now.strftime("%H:%M")
 
     day_slots = window.schedule.get(date_key)
     if not day_slots:
@@ -113,7 +125,10 @@ async def get_active_windows_now(
     session: AsyncSession,
     application_code: str,
     now: datetime,
+    timezone: str | None = None,
 ) -> list[WorkWindow]:
     """Return work windows that are active and cover the given datetime."""
+    from api.presentation.config import load_config
+    tz = timezone or load_config().get("timezone", "America/Bogota")
     windows = await get_work_windows(session, application_code=application_code, active_only=True)
-    return [w for w in windows if is_window_active_now(w, now)]
+    return [w for w in windows if is_window_active_now(w, now, tz)]

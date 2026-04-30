@@ -404,6 +404,9 @@ async def dispatch_level(
             work_window_id=w.id,
         )
 
+    # index to_assign by id for quick lookup after WDD
+    conv_by_id = {str(c.id): c for c in to_assign}
+
     pool = [_snapshot_to_pool_member(code_to_window[code], snap, code) for code, snap in snapshots.items()]
     cases = [_email_to_case(c, level) for c in to_assign]
 
@@ -414,11 +417,39 @@ async def dispatch_level(
         code_to_window, code_to_id, snapshots, load_pcts,
     )
 
+    # Build Outlook move list for newly assigned conversations
+    new_moves: list[dict] = []
+    for ar in report.assigned:
+        conv = conv_by_id.get(ar.case_id)
+        if not conv:
+            continue
+        target_folder = await get_folder_for_specialist(
+            session, application_code, code_to_id[ar.specialist_code],
+        )
+        if target_folder:
+            new_moves.append({
+                "thread_id": ar.case_id,
+                "conversation_id": conv.conversation_id,
+                "source_folder": conv.folder,
+                "especialist_id": str(code_to_id[ar.specialist_code]),
+                "target_folder": target_folder,
+                "subject": conv.subject,
+                "sender_email": conv.sender_email,
+            })
+        else:
+            logger.warning(
+                "No analyst folder for specialist %s app=%s — skipping Outlook move",
+                ar.specialist_code, application_code,
+            )
+
     await session.commit()
 
+    all_moves = new_moves + to_redirect
+
     logger.info(
-        "Dispatch level=%d complete: app=%s assigned=%d redirected=%d queued=%d",
-        level, application_code, len(level_results), len(to_redirect), len(queued) + report.total_queued,
+        "Dispatch level=%d complete: app=%s assigned=%d moves=%d redirected=%d queued=%d",
+        level, application_code, len(level_results), len(new_moves),
+        len(to_redirect), len(queued) + report.total_queued,
     )
 
     return {
@@ -429,5 +460,5 @@ async def dispatch_level(
         "total_redirected": len(to_redirect),
         "queued": len(queued) + report.total_queued,
         "assignments": level_results,
-        "redirects": to_redirect,
+        "redirects": all_moves,
     }

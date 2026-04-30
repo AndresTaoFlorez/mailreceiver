@@ -33,7 +33,7 @@ async def create_ticket(
         especialist_code=especialist_code,
     )
     session.add(row)
-    await session.commit()
+    await session.flush()
     await session.refresh(row)
     logger.info("Created ticket code=%s app=%s", code, application)
     return row

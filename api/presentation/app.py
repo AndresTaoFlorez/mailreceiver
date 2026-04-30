@@ -6,7 +6,8 @@ from litestar.status_codes import HTTP_200_OK, HTTP_201_CREATED
 
 from api.presentation import config
 from api.presentation.agent_manager import AgentManager
-from api.presentation.config import ensure_dirs
+from api.presentation.config import ensure_dirs, AGENT_HOST, AGENT_PORT
+from api.presentation.watcher import WatcherManager
 from api.presentation.routes.tutela_en_linea import TutelaEnLineaController
 from api.presentation.routes.justicia_xxi_web import JusticiaXxiWebController
 from api.presentation.routes.cierres_tyba import CierresTybaController
@@ -20,6 +21,10 @@ from api.presentation.routes.dispatch import DispatchController
 from agent.browser import scraping_config
 
 agent_manager = AgentManager()
+watcher_manager = WatcherManager(
+    agent_url=f"http://{AGENT_HOST}:{AGENT_PORT}",
+    missaquest_url=config.MISSAQUEST_URL,
+)
 
 
 # --- Config ---
@@ -100,6 +105,7 @@ async def on_startup() -> None:
 
 
 async def on_shutdown() -> None:
+    watcher_manager.stop_all()
     agent_manager.stop()
 
 

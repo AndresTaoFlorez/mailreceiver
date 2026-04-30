@@ -18,7 +18,7 @@ from litestar.status_codes import HTTP_200_OK, HTTP_201_CREATED
 from litestar.exceptions import NotFoundException
 from pydantic import BaseModel, Field
 
-from api.presentation.config import AGENT_HOST, AGENT_PORT, load_config
+from api.presentation.config import AGENT_HOST, AGENT_PORT, MISSAQUEST_URL, load_config
 from api.shared.logger import get_logger
 
 logger = get_logger("app_controller")
@@ -28,6 +28,7 @@ from api.infrastructure import assignment_repository as assign_repo
 from api.infrastructure import especialist_repository as esp_repo
 from api.infrastructure.email_repository import get_conversations, count_conversations
 from api.application.dispatcher import dispatch_level
+from api.application.ticket_service import create_tickets_for_app
 from api.domain.schemas import FolderConfigCreate, FolderConfigUpdate
 from api.domain.mappers import (
     ok, ok_list, ok_page,
@@ -38,7 +39,7 @@ AGENT_URL = f"http://{AGENT_HOST}:{AGENT_PORT}"
 
 
 class ScrapeRequest(BaseModel):
-    folder: str | None = Field(default=None, examples=["Bandeja de entrada"])
+    folder: str | None = Field(default=None)
     extraction_mode: str = Field(default="latest", examples=["latest"])
 
 
@@ -62,6 +63,8 @@ def create_app_controller(
     path: str,
     tags: list[str],
     assign_specialists: bool = False,
+    watcher: bool = False,
+    create_tickets: bool = False,
 ) -> type[Controller]:
     """Create a Litestar Controller class scoped to a specific application."""
 
@@ -317,8 +320,46 @@ def create_app_controller(
             from api.domain.mappers import map_assignment_rich
             return ok_page("assignments", rows, total, page, per_page, map_assignment_rich)
 
+        # --- Tickets ---
+
+        @post("/create-tickets", summary=f"Create Ivanti tickets for unassigned cases ({tags[0]})", status_code=HTTP_200_OK)
+        async def create_tickets_endpoint(self) -> dict:
+            async with async_session() as db:
+                return await create_tickets_for_app(db, app_name, MISSAQUEST_URL)
+
+        # --- Watcher ---
+
+        @post("/watcher/start", summary=f"Start background watcher ({tags[0]})", status_code=HTTP_200_OK)
+        async def start_watcher(
+            self,
+            interval_seconds: int = Parameter(query="interval_seconds", default=300, ge=60),
+        ) -> dict:
+            from api.presentation.app import watcher_manager, agent_manager
+            await agent_manager.ensure_running()
+            watcher_manager.get(app_name, create_tickets=create_tickets).start(interval_seconds=interval_seconds)
+            return watcher_manager.get(app_name).status()
+
+        @post("/watcher/stop", summary=f"Stop background watcher ({tags[0]})", status_code=HTTP_200_OK)
+        async def stop_watcher(self) -> dict:
+            from api.presentation.app import watcher_manager
+            watcher_manager.get(app_name).stop()
+            return watcher_manager.get(app_name).status()
+
+        @get("/watcher/status", summary=f"Watcher status ({tags[0]})", status_code=HTTP_200_OK)
+        async def watcher_status(self) -> dict:
+            from api.presentation.app import watcher_manager
+            return watcher_manager.get(app_name).status()
+
     if not assign_specialists:
         del AppController.assign_specialists
+
+    if not create_tickets:
+        del AppController.create_tickets_endpoint
+
+    if not watcher:
+        del AppController.start_watcher
+        del AppController.stop_watcher
+        del AppController.watcher_status
 
     AppController.path = path
     AppController.tags = tags

@@ -5,4 +5,6 @@ JusticiaXxiWebController = create_app_controller(
     path="/justicia-xxi-web",
     tags=["Justicia XXI Web"],
     assign_specialists=True,
+    watcher=True,
+    create_tickets=True,
 )

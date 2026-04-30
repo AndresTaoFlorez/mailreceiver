@@ -58,6 +58,7 @@ _DEFAULTS: dict = {
     "default_page": 1,
     "default_per_page": 20,
     "max_per_page": 100,
+    "timezone": "America/Bogota",
 }
 
 
