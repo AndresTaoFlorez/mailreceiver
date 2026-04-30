@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 
@@ -8,6 +9,12 @@ from api.presentation.config import get as cfg
 from api.shared.logger import get_logger
 
 logger = get_logger("agent")
+
+# HEADLESS env var overrides config.json — always True in Docker (no display server)
+_HEADLESS_ENV = os.getenv("HEADLESS", "").lower()
+_FORCE_HEADLESS: bool | None = True if _HEADLESS_ENV in ("1", "true", "yes") else (
+    False if _HEADLESS_ENV in ("0", "false", "no") else None
+)
 
 
 class BrowserSession:
@@ -21,10 +28,12 @@ class BrowserSession:
         self._page: Page | None = None
 
     async def start(self) -> None:
-        headless = cfg("headless")
+        headless = _FORCE_HEADLESS if _FORCE_HEADLESS is not None else cfg("headless")
+        # --no-sandbox is required in Docker/Linux (no user namespace support)
+        args = ["--no-sandbox", "--disable-setuid-sandbox"] if headless else []
         logger.info("Starting browser session '%s' (headless=%s)", self.name, headless)
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(headless=headless)
+        self._browser = await self._playwright.chromium.launch(headless=headless, args=args)
         self._context = await self._browser.new_context(
             user_agent=cfg("user_agent"),
             viewport={"width": cfg("viewport_width"), "height": cfg("viewport_height")},

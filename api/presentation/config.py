@@ -7,10 +7,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- Infra (env-only, don't change at runtime) ---
-PORT: int = int(os.getenv("PORT", "8000"))
-STORAGE_PATH: Path = Path(os.getenv("STORAGE_PATH", "storage"))
-AGENT_HOST: str = os.getenv("AGENT_HOST", "localhost")
-AGENT_PORT: int = int(os.getenv("AGENT_PORT", "8001"))
+PORT: int = int(os.getenv("PORT") or "8000")
+STORAGE_PATH: Path = Path(os.getenv("STORAGE_PATH") or "storage")
+AGENT_HOST: str = os.getenv("AGENT_HOST") or "localhost"
+AGENT_PORT: int = int(os.getenv("AGENT_PORT") or "8001")
 MISSAQUEST_URL: str = os.getenv("MISSAQUEST_URL", "http://localhost:8010")
 
 # --- Application credentials (env-only, never in config.json) ---
