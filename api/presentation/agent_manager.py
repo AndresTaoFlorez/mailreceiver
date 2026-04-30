@@ -6,12 +6,17 @@ from pathlib import Path
 
 import httpx
 
+import os
+
 from api.presentation.config import AGENT_HOST, AGENT_PORT
 from api.shared.logger import get_logger
 
 logger = get_logger("api")
 
 AGENT_URL = f"http://{AGENT_HOST}:{AGENT_PORT}"
+# When false the agent runs as a separate container/process (Docker).
+# When true (default for local dev) the API spawns it as a subprocess.
+_MANAGE_AGENT = os.getenv("MANAGE_AGENT", "true").lower() not in ("false", "0", "no")
 
 
 class AgentManager:
@@ -19,6 +24,10 @@ class AgentManager:
         self._process: subprocess.Popen | None = None
 
     def start(self) -> None:
+        if not _MANAGE_AGENT:
+            logger.info("MANAGE_AGENT=false — skipping agent subprocess start")
+            return
+
         if self._process and self._process.poll() is None:
             logger.info("Agent already running (pid=%d)", self._process.pid)
             return
@@ -30,7 +39,7 @@ class AgentManager:
                 "--host", AGENT_HOST,
                 "--port", str(AGENT_PORT),
             ],
-            cwd=str(Path(__file__).resolve().parent.parent),
+            cwd=str(Path(__file__).resolve().parent.parent.parent),
         )
         logger.info("Agent started (pid=%d)", self._process.pid)
 

@@ -2,18 +2,18 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY agent/requirements.txt .
+COPY agent/requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 RUN playwright install chromium --with-deps
 
+COPY api/ api/
 COPY agent/ agent/
-COPY api/config.py api/config.py
-COPY api/__init__.py api/__init__.py
-COPY shared/ shared/
+COPY wdd/ wdd/
 
+ENV AGENT_PORT=8001
 ENV HEADLESS=1
 ENV STORAGE_PATH=/app/storage
 
-EXPOSE 8001
+EXPOSE ${AGENT_PORT}
 
-CMD ["uvicorn", "agent.core:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["sh", "-c", "python -m agent --host 0.0.0.0 --port ${AGENT_PORT}"]

@@ -1,49 +1,85 @@
 # Deployment
 
-## Docker (local o servidor)
+## Ports
+
+All ports are configured via `.env`. Change these if defaults conflict with other apps on the server:
+
+```env
+PORT=8020               # API internal port (inside process/container)
+AGENT_PORT=8021         # Agent internal port
+
+API_HOST_PORT=8020      # Host port exposed by Docker (external)
+AGENT_HOST_PORT=8021    # Host port exposed by Docker (external)
+```
+
+## Docker (recommended for production)
 
 ```bash
 docker compose up -d --build
 ```
 
-Puertos por defecto: API en 8010, Agent en 8011.
+- API listens on `API_HOST_PORT` externally, `PORT` internally.
+- Agent listens on `AGENT_HOST_PORT` externally, `AGENT_PORT` internally.
+- API talks to the agent via service name `agent` (Docker DNS), not localhost.
+- `MANAGE_AGENT=false` is set automatically in `Dockerfile.api` — the API does NOT spawn the agent as a subprocess; the agent container is already running.
 
 ## CI/CD
 
-GitHub Actions en push a `main`:
+GitHub Actions on push to `main`:
 
-1. SSH al droplet de DigitalOcean
+1. SSH to the Linode droplet
 2. `git pull`
 3. `docker compose up -d --build`
 
-Ruta remota: `/home/sample/tybacase_mailwindow`
+Remote path: `/home/sample/tybacase_mailwindow`
 
-## Ejecucion manual (desarrollo)
+## Local development (without Docker)
 
 ```bash
-# Activar venv
+# Activate venv
 .venv\Scripts\activate        # Windows
 source .venv/bin/activate     # Linux/Mac
 
-# Iniciar (API en 8000, Agent se inicia automaticamente en 8001)
-litestar --app api.app:app run --reload
+# Start — reads port from litestar.toml (PORT=8020)
+# Agent auto-starts on AGENT_PORT=8021 as a subprocess
+litestar run
 
-# Si el launcher de litestar falla en Windows:
-python -m litestar --app api.app:app run --reload
+# Or explicitly:
+python -m litestar --app api.presentation.app:app run --host 0.0.0.0 --port 8020 --reload
 
-# Agent standalone (debug):
-python -m agent --port 8001 --reload
+# Agent standalone (debug only):
+python -m agent --port 8021 --reload
 ```
 
-**Nota Windows**: el launcher del Agent (`agent/__main__.py`) configura `WindowsProactorEventLoopPolicy` requerido por Playwright. No usar `uvicorn agent.core:app` directamente.
+`litestar.toml` sets `port = 8020` and `host = "0.0.0.0"` so the short `litestar run` command just works.
 
-## Migraciones
+**Windows note**: `agent/__main__.py` sets `WindowsProactorEventLoopPolicy` required by Playwright.
+Do NOT use `uvicorn agent.core:app` directly on Windows.
 
-Las migraciones en `migrations/` se ejecutan manualmente contra PostgreSQL:
+## Environment variables (.env)
+
+| Variable | Description | Default |
+|---|---|---|
+| `PORT` | API listening port | `8020` |
+| `AGENT_PORT` | Agent listening port | `8021` |
+| `API_HOST_PORT` | Docker host port for API | `8020` |
+| `AGENT_HOST_PORT` | Docker host port for Agent | `8021` |
+| `AGENT_HOST` | Host where agent runs | `localhost` |
+| `MANAGE_AGENT` | `true` = API spawns agent subprocess (local dev); `false` = separate container (Docker) | `true` |
+| `PG_HOST` / `PG_PORT` / `PG_USER` / `PG_PASSWORD` / `PG_DATABASE` | PostgreSQL connection | — |
+| `MISSAQUEST_URL` | URL of the Missaquest service | — |
+
+## Migrations
+
+Run manually against PostgreSQL (in order):
 
 ```
-003_workload_dispatch.sql    — Tablas de dispatch + FKs de application_code
-004_drop_extraction_mode.sql — Elimina extraction_mode de folder_config
-005_specialist_folder.sql    — Tabla specialist_folders
-006_conversation_level.sql   — Campo level en conversations
+001_initial.sql
+002_...
+003_workload_dispatch.sql    — Workload dispatch tables + application_code FKs
+004_drop_extraction_mode.sql — Remove extraction_mode from folder_config
+005_specialist_folder.sql    — specialist_folders table
+006_conversation_level.sql   — level field on conversations
+007_uuid_fks.sql             — UUID FKs on assignments, work_windows, balance_snapshots
+008_analyst_folders.sql      — Merge specialist_folders into folder_config; add especialist_id
 ```

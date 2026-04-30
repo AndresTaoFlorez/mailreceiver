@@ -2,16 +2,23 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY api/requirements.txt .
+# API deps (includes asyncpg, httpx, etc.)
+COPY api/presentation/requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy all source (agent/ needed for scraping_config import; no playwright required)
 COPY api/ api/
-COPY shared/ shared/
+COPY agent/ agent/
+COPY wdd/ wdd/
 COPY main.py .
 
 ENV PORT=8000
+ENV AGENT_HOST=agent
+ENV AGENT_PORT=8001
+# Set to false in Docker: the agent runs as a separate container, not a subprocess
+ENV MANAGE_AGENT=false
 ENV STORAGE_PATH=/app/storage
 
 EXPOSE ${PORT}
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
+CMD ["sh", "-c", "python -m litestar --app api.presentation.app:app run --host 0.0.0.0 --port ${PORT}"]
