@@ -3,7 +3,7 @@ from __future__ import annotations
 from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 from agent.browser.base_step import BaseStep, StepContext
-from shared.logger import get_logger
+from api.shared.logger import get_logger
 
 logger = get_logger("agent")
 

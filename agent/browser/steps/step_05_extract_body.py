@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent.browser.base_step import BaseStep, StepContext
-from shared.logger import get_logger
+from api.shared.logger import get_logger
 
 EXTRACTED_HTML_DIR = Path(__file__).resolve().parent.parent.parent.parent / "storage" / "html"
 

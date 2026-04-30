@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from api.config import STORAGE_PATH
+from api.presentation.config import STORAGE_PATH
 from agent.browser.base_step import BaseStep, StepContext
 from agent.browser.scraping_config import load as load_scraping_config
-from shared.logger import get_logger
+from api.shared.logger import get_logger
 
 logger = get_logger("agent")
 

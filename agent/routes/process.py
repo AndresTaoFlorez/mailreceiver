@@ -3,14 +3,14 @@ from __future__ import annotations
 from litestar import Request, post
 from pydantic import BaseModel, Field
 
-from api.config import get_app_credentials
+from api.presentation.config import get_app_credentials
 from agent.browser.base_step import StepContext
 from agent.browser.pipeline import StepPipeline
 from agent.browser.steps import build_login_pipeline, build_scrape_pipeline
-from domain.database import async_session
-from domain.repository import save_conversations
-from domain.schemas import ScrapedEmail, ScrapeResult
-from shared.logger import get_logger
+from api.infrastructure.database import async_session
+from api.infrastructure.email_repository import save_conversations
+from api.domain.schemas import ScrapedEmail, ScrapeResult
+from api.shared.logger import get_logger
 
 logger = get_logger("agent")
 
@@ -20,6 +20,7 @@ class ProcessRequest(BaseModel):
     folder: str = Field(description="Outlook folder name")
     unread_only: bool = Field(default=False, description="Filter unread conversations only")
     extraction_mode: str = Field(default="latest", description="'latest', 'oldest', or 'full'")
+    level: int | None = Field(default=None, description="Support level for this folder (1, 2, etc.)")
 
 
 @post("/process")
@@ -70,7 +71,7 @@ async def process_handler(data: ProcessRequest, request: Request) -> dict:
     # Persist to PostgreSQL (skip duplicates by conversation_id)
     inserted = 0
     async with async_session() as db:
-        inserted = await save_conversations(db, conversations, data.application, data.folder)
+        inserted = await save_conversations(db, conversations, data.application, data.folder, level=data.level)
 
     result = ScrapeResult(
         status="ok",

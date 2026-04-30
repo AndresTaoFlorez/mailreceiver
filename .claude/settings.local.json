@@ -47,7 +47,26 @@
       "Bash(taskkill:*)",
       "Bash(wc:*)",
       "Bash(ls:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Skill(update-config)",
+      "Bash(xargs grep:*)",
+      "Bash(grep -h \"^from\\\\|^import\" /d/Projects/mailreceiver/api/routes/*.py /d/Projects/mailreceiver/api/*.py /d/Projects/mailreceiver/domain/*.py /d/Projects/mailreceiver/shared/*.py)",
+      "Bash(grep -n \"\\\\\"status\\\\\": \\\\\"ok\\\\\"\" /d/Projects/mailreceiver/api/routes/*.py)",
+      "Bash(grep -n \"\\\\.model_dump\\(\\)\" /d/Projects/mailreceiver/api/routes/*.py)",
+      "Bash(grep -n \"async with async_session\\(\\)\" /d/Projects/mailreceiver/api/routes/*.py)",
+      "Bash(grep -A 5 \"offset = \\(page - 1\\)\" /d/Projects/mailreceiver/api/routes/*.py)",
+      "Bash(rm:*)",
+      "Bash(mkdir -p src)",
+      "Bash(touch src/__init__.py)",
+      "Bash(mv application:*)",
+      "Bash(mv domain:*)",
+      "Bash(mv infrastructure:*)",
+      "Bash(mv api:*)",
+      "Bash(mv src:*)",
+      "Bash(mv _pres_tmp api/presentation)",
+      "Bash(psql:*)",
+      "Bash(del:*)",
+      "Bash(grep -l \"create_app_controller\" api/presentation/routes/*.py)"
     ]
   }
 }

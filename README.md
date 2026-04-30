@@ -1,314 +1,239 @@
-# mailwindow
+# Mailreceiver
 
-Two-service RPA: **API** (REST, Litestar) + **Agent** (Outlook browser automation, Playwright).
+Sistema RPA de dos servicios que extrae correos de Outlook Web mediante automatizacion de navegador y los distribuye entre especialistas usando un algoritmo de asignacion por deficit.
 
 ## Quick start
 
-El proyecto usa **Litestar** (no FastAPI ni Django). El API arranca el Agent automáticamente
-como subproceso, así que solo necesitas **una terminal**:
-
 ```bash
-# 1. Activar el entorno virtual
-.venv\Scripts\activate        # Windows
-source .venv/bin/activate     # Linux/Mac
-
-# 2. Arrancar (API en puerto 8000, Agent se inicia solo en 8001)
+# Activar venv, luego:
 litestar --app api.app:app run --reload
 ```
 
-> **No uses `uvicorn main:app`** directamente porque en Windows puede fallar con
-> `Fatal error in launcher: Unable to create process`. Usa `litestar run`
-> o `python -m uvicorn api.app:app --reload --port 8000`.
-
-Si necesitas arrancar el Agent por separado (debug):
-
-```bash
-python -m agent --port 8001 --reload
-```
+Un solo comando levanta ambos servicios. La API (puerto 8000) inicia automaticamente el Agent (puerto 8001) como subproceso.
 
 Swagger UI: `http://localhost:8000/schema/swagger`
 
-Docker:
+---
 
-```bash
-docker compose up -d --build   # API en 8010, Agent en 8011
+## Arquitectura
+
 ```
+                          ┌──────────────────────────────────┐
+  Cliente                 │           API (8000)             │
+  (dashboard,  ─── HTTP ──│  Litestar REST                   │
+   scheduler)             │  - Endpoints por aplicacion      │
+                          │  - Dispatch (WDD)                │
+                          │  - CRUD especialistas/ventanas   │
+                          └────────────┬─────────────────────┘
+                                       │ HTTP interno
+                          ┌────────────▼─────────────────────┐
+                          │          Agent (8001)             │
+                          │  Litestar + Playwright            │
+                          │  - Login en Outlook               │
+                          │  - Scraping de carpetas           │
+                          │  - Extraccion de cuerpo HTML      │
+                          └────────────┬─────────────────────┘
+                                       │
+                          ┌────────────▼─────────────────────┐
+                          │        PostgreSQL                 │
+                          │  asyncpg + SQLAlchemy async       │
+                          └──────────────────────────────────┘
+```
+
+La API es el punto de entrada unico. El Agent es un servicio interno que solo la API consume.
 
 ---
 
-## Arquitectura general
+## Conceptos clave
+
+### Aplicacion
+
+Una aplicacion representa un buzon de Outlook independiente con sus propias credenciales, carpetas y equipo de especialistas. Cada aplicacion tiene endpoints identicos bajo su propio prefijo (`/{app}/...`). Se registran en la tabla `applications`.
+
+### RPA: Flujo de scraping
+
+El Agent ejecuta un pipeline de 5 pasos sobre Outlook Web (outlook.office.com):
 
 ```
-┌──────────────────────┐          ┌──────────────────────────────────┐
-│  API  (port 8000)    │──HTTP──> │  Agent  (port 8001)              │
-│  Litestar            │          │  Litestar + Playwright           │
-│                      │          │                                  │
-│  POST /{app}/unread- │          │  POST /process                   │
-│    conversations     │          │    └─ Pipeline de 5 steps        │
-│                      │          │                                  │
-│  Consulta PostgreSQL │          │  Guarda resultados en PostgreSQL │
-│  y retorna paginado  │          │  via browser automation          │
-└──────────────────────┘          └──────────────────────────────────┘
-```
-
----
-
-## Flujo completo paso a paso
-
-Cuando el cliente llama `POST /tutela-en-linea/unread-conversations`:
-
-### Fase 1: API recibe la petición
-
-```
-api/routes/tutela_en_linea.py:48
-  → Verifica que el agent esté corriendo (api/agent_manager.py)
-  → Hace POST http://localhost:8001/process con { application, folder, unread_only }
-```
-
-### Fase 2: Agent ejecuta el pipeline de scraping
-
-El agent recibe la petición en `agent/routes/process.py` y ejecuta **dos pipelines secuenciales**:
-
-```
-agent/routes/process.py:25
+POST /{app}/unread-conversations
   │
-  ├─ Pipeline 1: LOGIN
-  │   └─ Step 1: LoginStep (agent/browser/steps/step_01_login.py)
-  │       ├─ Navega a https://outlook.office.com/mail/
-  │       ├─ Si ya hay sesión activa → skip
-  │       └─ Si no → ingresa email, password, confirma "Mantener sesión"
-  │       └─ CRÍTICO: si falla, aborta todo
+  ├─ Paso 1: Login
+  │   Navega a Outlook, inicia sesion si no hay sesion activa.
+  │   Critico: si falla, se aborta.
   │
-  └─ Pipeline 2: SCRAPE (4 steps secuenciales)
-      │
-      ├─ Step 2: NavigateFolderStep (step_02_navigate_folder.py)
-      │   ├─ Recarga Outlook para tener DOM limpio
-      │   ├─ Espera el panel de carpetas [role="tree"]
-      │   ├─ Click en la carpeta solicitada (ej: "Bandeja de entrada")
-      │   ├─ Extrae conteo de no leídos del atributo title del treeitem
-      │   │   Ejemplo: "Bandeja de entrada : Elementos 314 (92 no leídos)"
-      │   │   Regex: \((\d+)\s+no\s+le  → 92
-      │   ├─ Guarda en ctx.shared["expected_unread"] (puede ser None si falla)
-      │   └─ CRÍTICO: si falla, aborta
-      │
-      ├─ Step 3: FilterUnreadStep (step_03_filter_unread.py)
-      │   ├─ Si unread_only=False → skip
-      │   ├─ Busca botón de filtro con múltiples selectores
-      │   ├─ Click en botón → espera dropdown → click "No leído"
-      │   ├─ Guarda screenshots de debug en storage/
-      │   ├─ Guarda ctx.shared["filter_applied"] = True/False
-      │   └─ NO CRÍTICO: si falla, el pipeline continúa SIN filtro
-      │       ⚠️ Esto significa que Step 4 scrapeará TODOS los correos,
-      │       no solo los no leídos
-      │
-      ├─ Step 4: ScrapeConversationsStep (step_04_scrape_conversations.py)
-      │   ├─ Espera que aparezca [role="listbox"] (lista de correos)
-      │   ├─ Lee aria-setsize del primer row para saber el total
-      │   ├─ Detecta si Outlook usa Virtuoso scroller (virtual scroll)
-      │   ├─ LOOP de scroll-parse (hasta 200 iteraciones):
-      │   │   ├─ Lee todas las filas [role="option"] visibles en el DOM
-      │   │   ├─ Para cada fila nueva (por id, no repetida):
-      │   │   │   ├─ Ejecuta parse_email_card() → JS que extrae:
-      │   │   │   │   conversation_id, subject, sender, sender_email, date
-      │   │   │   ├─ Si subject="" Y sender="" → descarta silenciosamente
-      │   │   │   └─ Si parse falla → log DEBUG (no visible por defecto)
-      │   │   ├─ Scroll: si Virtuoso → JS scrollTop; si no → mouse.wheel(0,400)
-      │   │   ├─ Espera scroll_wait_ms (1500ms) entre iteraciones
-      │   │   └─ Detección de estancamiento: si 10 iteraciones sin nuevas filas → para
-      │   ├─ Guarda ctx.shared["conversations"] = lista de dicts
-      │   ├─ Timeout global: 300 segundos (5 min)
-      │   └─ CRÍTICO: si falla, aborta
-      │
-      └─ Step 5: ExtractBodyStep (step_05_extract_body.py)
-          ├─ Para CADA conversación recopilada en Step 4:
-          │   ├─ Busca la fila en el DOM por [data-convid="..."]
-          │   │   ⚠️ CUELLO DE BOTELLA: las filas pueden haber desaparecido
-          │   │   del DOM virtual tras el scroll de Step 4
-          │   ├─ Si no encuentra la fila → skip (log info)
-          │   ├─ Click en la fila → espera 2s
-          │   ├─ Espera que aparezca el panel de lectura (8s timeout)
-          │   │   Selectores: div[role="document"], div[data-testid="message-body"],
-          │   │   div.XbIp4, div[aria-label*="cuerpo"], div[aria-label*="body"]
-          │   ├─ Si timeout → skip (log info)
-          │   ├─ Cuenta mensajes en el hilo (JS)
-          │   ├─ Si >1 mensaje: scroll 5 veces al fondo (800ms entre scrolls)
-          │   │   para llegar al mensaje más antiguo (el primero de la conversación)
-          │   ├─ Extrae innerHTML del ÚLTIMO div[role="document"] (= mensaje más antiguo)
-          │   │   Con fallbacks: div.XbIp4, div[aria-label*="cuerpo"], div[dir="ltr"]
-          │   └─ Guarda en conv["body"] = html_string
-          ├─ Log final: "N/M conversations have body"
-          └─ NO CRÍTICO: si falla parcial o totalmente, el pipeline continúa
-              Las conversaciones se guardan en DB con body="" (vacío)
+  ├─ Paso 2: Navegar a carpeta
+  │   Recarga Outlook, espera el panel de carpetas, hace click en la carpeta solicitada.
+  │   Extrae el conteo de no leidos del badge de la carpeta.
+  │   Critico: si falla, se aborta.
+  │
+  ├─ Paso 3: Filtrar no leidos
+  │   Aplica el filtro "No leidos" en la UI de Outlook.
+  │   No critico: si falla, el paso 4 extrae todos los correos.
+  │
+  ├─ Paso 4: Scraping de conversaciones
+  │   Loop de scroll incremental sobre el listado virtual (Virtuoso).
+  │   Outlook solo mantiene ~15-20 filas en el DOM, asi que el scraper
+  │   hace scroll, parsea las filas visibles, y repite.
+  │   Extrae: conversation_id, subject, sender, fecha, tags.
+  │   Critico: si falla, se aborta.
+  │
+  └─ Paso 5: Extraccion de cuerpo
+      Para cada conversacion del paso 4, hace click en la fila,
+      espera el panel de lectura y extrae el HTML del cuerpo.
+      No critico: si falla, la conversacion queda con body="".
 ```
 
-### Fase 3: Persistencia
+Los resultados se persisten con upsert: si el `conversation_id` ya existe se actualiza, si es nuevo se inserta.
+
+### Folder Config
+
+Mapea carpetas de Outlook a niveles de soporte dentro de una aplicacion. Tabla `folder_config`.
 
 ```
-agent/routes/process.py:62-68
-  → Convierte cada dict a ScrapedEmail (Pydantic)
-  → Upsert masivo en PostgreSQL:
-      Si conversation_id ya existe → UPDATE (actualiza subject, body, etc.)
-      Si es nuevo → INSERT
-      Constraint: UNIQUE(conversation_id) previene duplicados
-  → ⚠️ Si conversation_id="" → NULL != NULL en SQL, se inserta nuevo cada vez
+"SOPORTE BASICO"    → nivel 1
+"SOPORTE AVANZADO"  → nivel 2
 ```
 
-### Fase 4: Respuesta al cliente
+El nivel determina a que pool de especialistas se enrutan los casos durante el dispatch. Un especialista de nivel 1 solo recibe casos de carpetas configuradas como nivel 1.
 
-```
-api/routes/tutela_en_linea.py:56-70
-  → Consulta PostgreSQL filtrando por app + folder
-  → Retorna respuesta paginada con new_saved (cuántos se guardaron esta vez)
-```
+### Especialistas
 
----
+Tabla `especialist`. Cada especialista tiene:
 
-## Cuellos de botella conocidos
+- **code**: identificador unico corto
+- **level**: nivel de soporte que atiende (debe coincidir con folder_config)
+- **load_percentage**: porcentaje fijo de carga (null = auto-distribuir equitativamente)
+- **priority**: desempate cuando dos especialistas tienen el mismo deficit
 
-### 1. Step 5: Filas desaparecen del DOM virtual (PRINCIPAL)
+### Specialist Folder
 
-Outlook Web usa un **scroller virtual** (Virtuoso) que solo mantiene en el DOM las filas
-visibles en pantalla (~15-20). Después de que Step 4 hace scroll hasta el fondo para
-recopilar todas las conversaciones, las filas del inicio ya NO están en el DOM.
+Mapea cada especialista a su carpeta personal de Outlook dentro de una aplicacion. Tabla `specialist_folders`. Se usa para saber donde mover o marcar correos una vez asignados.
 
-Cuando Step 5 intenta buscar `[data-convid="..."]` para cada conversación, la mayoría
-retorna `count() == 0` y se salta. **Solo las últimas filas visibles en pantalla
-tienen body extraído** — por eso de 10+ correos solo 2 tienen body.
+### Work Windows (Ventanas de trabajo)
 
-**Solución necesaria:** Step 5 debe hacer scroll de vuelta al inicio y buscar
-cada fila navegando el scroll virtual, no asumiendo que están en el DOM.
-
-### 2. Step 3: Filtro falla silenciosamente
-
-`FilterUnreadStep.is_critical = False`. Si el botón de filtro cambia de selector
-(Outlook actualiza su UI frecuentemente), el filtro no se aplica pero el pipeline
-continúa. Step 4 scrapeará TODOS los correos en vez de solo los no leídos.
-
-### 3. Step 4: Detección de estancamiento agresiva
-
-Si Outlook tarda más de `1500ms × 10 = 15s` en renderizar nuevas filas tras un scroll,
-el scraper asume que no hay más y para. Puede detenerse con solo 20-30 correos
-de 100+ disponibles.
-
-### 4. Errores de parseo silenciosos
-
-En Step 4, si `parse_email_card()` lanza excepción, se loguea a nivel DEBUG
-(invisible en configuración normal). Correos con subject vacío Y sender vacío
-se descartan sin aviso.
-
-### 5. Timeout de lectura de body corto
-
-Step 5 espera solo **8 segundos** para que cargue el panel de lectura.
-Con hilos largos (muchos mensajes), Outlook puede tardar más → se salta.
-
----
-
-## API endpoints
-
-### Tutela en Linea
-
-**`POST /tutela-en-linea/unread-conversations`**
-
-```json
-{ "folder": "Bandeja de entrada", "page": 1, "per_page": 20 }
-```
-
-### Justicia XXI Web
-
-**`POST /justicia-xxi-web/unread-conversations`**
-
-```json
-{ "folder": "Bandeja de entrada", "page": 1, "per_page": 20 }
-```
-
-### Response (paginated)
+Una ventana de trabajo define **cuando** y **con que capacidad** un especialista esta disponible para recibir casos. Tabla `work_windows`.
 
 ```json
 {
-  "status": "ok",
-  "page": 1,
-  "per_page": 20,
-  "total": 78,
-  "pages": 4,
-  "new_saved": 5,
-  "conversations": [
-    {
-      "id": "550e8400-e29b-41d4-a716-446655440000",
-      "conversation_id": "AAQkADJm...",
-      "subject": "SOLICITUD URGENTE",
-      "sender": "Juzgado 01 Laboral",
-      "sender_email": "j01lactociena@cendoj.ramajudicial.gov.co",
-      "date": { "year": 2026, "month": 4, "day": 21, "hour": 19 },
-      "body": "<div>HTML del primer mensaje...</div>",
-      "created_at": "2026-04-21T19:11:00+00:00"
-    }
-  ]
+  "especialist_code": "spec01",
+  "application_code": "mi_app",
+  "load_percentage": 40,
+  "schedule": {
+    "2026-04-28": [{"start": "08:00", "end": "12:00"}],
+    "2026-04-29": [{"start": "08:00", "end": "12:00"}, {"start": "14:00", "end": "17:00"}]
+  }
 }
 ```
 
-- `new_saved`: conversaciones guardadas en este scrape (0 si todas eran duplicados)
-- `total`: total en DB para este app+folder
-- `pages`: páginas disponibles
-- `body`: HTML del primer mensaje de la conversación (puede estar vacío si extracción falló)
+- Dias no listados = especialista no disponible
+- El `load_percentage` de la ventana puede sobreescribir el del especialista
+- Solo los especialistas con ventana activa **en el momento del dispatch** entran al pool
+- Cada ventana acumula su propio snapshot de deficit (`balance_snapshots`)
+- Al crear una ventana nueva se puede heredar el deficit de una anterior (`inherit_balance_from`)
 
-### Config
+### WDD: Weighted Deficit Dispatch
 
-**`GET /config`** — Leer configuración actual.
+Algoritmo de asignacion que distribuye casos entre los especialistas disponibles. Especificacion completa en [`wdd/ALGORITHM.md`](wdd/ALGORITHM.md).
 
-**`POST /config`** — Actualizar configuración (merge parcial).
+**Idea central**: en cada ronda, sin importar cuantos casos lleguen, el sistema calcula la distribucion ideal y prioriza a quienes mas se han alejado de ella.
 
-**`GET /scraping-config`** — Parámetros de scraping.
+```
+deficit(i) = ideal(i) - recibido(i)
 
-**`POST /scraping-config`** — Actualizar parámetros de scraping.
+ideal(i) = total_casos × (load_percentage(i) / 100)
+```
 
-### Agent control
+- **Deficit positivo** → el sistema le debe casos al especialista (prioridad alta)
+- **Deficit negativo** → el especialista esta adelantado (prioridad baja)
 
-**`GET /agent/status`** — Estado del agent.
+El algoritmo asigna caso por caso, recalculando el deficit despues de cada asignacion. Esto garantiza equidad incluso con lotes de tamano impredecible.
 
-**`POST /agent/start`** / **`POST /agent/stop`** / **`POST /agent/restart`**
+**Escalaciones**: cuando un especialista escala un caso a otro, el deficit se ajusta manualmente para mantener la equidad en rondas futuras.
+
+Implementacion: `wdd/engine.py` (standalone, puro Python) + `domain/dispatcher.py` (adapter a DB).
+
+### Assignments (Asignaciones)
+
+Tabla `assignments`. Registro de que conversacion fue asignada a que especialista, en que nivel, y a traves de que ventana de trabajo.
+
+```
+conversacion X  →  especialista spec01  →  nivel 1  →  ventana abc-123
+```
+
+Las asignaciones son el resultado del dispatch. Una conversacion solo se asigna una vez (el dispatcher filtra las ya asignadas). El endpoint `GET /{app}/assignments` permite filtrar por:
+
+- `specialist` / `!specialist` — tiene o no especialista
+- `ticket` / `!ticket` — tiene o no ticket vinculado
+
+### Tickets
+
+Tabla `tickets`. Representa un ticket externo (ej. sistema de gestion) vinculado a una asignacion. Se crean despues de la asignacion y se vinculan via `PUT /dispatch/assignments/{id}/ticket`.
+
+El flujo completo es: **scraping → asignacion → creacion de ticket**.
 
 ---
 
-## Database
+## Base de datos
 
-PostgreSQL on `159.223.160.218:5432`, database `mailreceiver`.
+PostgreSQL con asyncpg + SQLAlchemy async. Modelos en `domain/models.py`.
 
-Table `conversations`:
-- `id` UUID PK
-- `conversation_id` unique (previene duplicados)
-- `app`, `folder`, `subject`, `sender`, `sender_email`
-- `body` (HTML del primer mensaje, puede estar vacío)
-- `year`, `month`, `day`, `hour`
-- `created_at` timestamptz
+| Tabla | Proposito |
+|-------|-----------|
+| `applications` | Catalogo de aplicaciones. PK = `code` |
+| `conversations` | Correos extraidos. `UNIQUE(conversation_id)` previene duplicados |
+| `especialist` | Especialistas. `UNIQUE(code)` |
+| `folder_config` | Carpeta de Outlook → nivel de soporte por aplicacion |
+| `specialist_folders` | Especialista → carpeta personal de Outlook por aplicacion |
+| `work_windows` | Disponibilidad: schedule JSONB por fecha + slots horarios |
+| `balance_snapshots` | Contadores de deficit por especialista por ventana |
+| `assignments` | Conversacion → especialista, creadas por el dispatcher |
+| `tickets` | Referencias a tickets externos |
+
+Migraciones en `migrations/`, se ejecutan manualmente.
 
 ---
 
-## Configuration
+## Endpoints
 
-Credentials in `.env` (never committed):
+Documentacion completa con descripciones de campos en Swagger UI. Referencia de endpoints en `ENDPOINTS_MAP.md`.
 
-```
-TUTELA_EN_LINEA_USER=...
-TUTELA_EN_LINEA_PASSWORD=...
-JUSTICIA_XXI_WEB_USER=...
-JUSTICIA_XXI_WEB_PASSWORD=...
-POSTGRES_URL=postgresql+asyncpg://user:pass@host:5432/mailreceiver
-```
+### Globales
 
-Scraping parameters in `storage/scraping_config.json`:
+| Seccion | Proposito |
+|---------|-----------|
+| Applications | CRUD de aplicaciones |
+| Specialists | CRUD de especialistas |
+| Coordinator | Ventanas de trabajo, snapshots de deficit, dashboard de carga |
+| Dispatch | Consultar asignaciones, vincular tickets |
+| Tickets | Crear y listar tickets |
+| Config | Configuracion de scraping y navegador en runtime |
+| Agent | Control del agente de automatizacion |
 
-```json
-{
-  "max_scroll_iterations": 200,   // Máximo de iteraciones del loop de scroll
-  "no_new_rows_limit": 10,        // Iteraciones sin nuevas filas antes de parar
-  "scroll_wait_ms": 1500,         // Espera entre scrolls (ms)
-  "scroll_amount_px": 600,        // Pixels de scroll con mouse wheel
-  "max_conversations": 0,         // 0 = ilimitado
-  "batch_size": 10,               // (sin uso actual)
-  "listbox_timeout_ms": 15000,    // Timeout para que aparezca la lista
-  "row_render_wait_ms": 2000,     // Espera para que se rendericen filas
-  "filter_wait_ms": 3000          // Espera después de aplicar filtro
-}
-```
+### Por aplicacion
 
-Browser config in `storage/config.json`.
+| Endpoint | Proposito |
+|----------|-----------|
+| `POST /{app}/unread-conversations` | Ejecutar scraping de Outlook |
+| `GET /{app}/conversations` | Consultar conversaciones (filtrable, paginado) |
+| `/{app}/folder-config` | CRUD de mapeo carpeta → nivel |
+| `/{app}/specialists-folder` | CRUD de mapeo especialista → carpeta personal |
+| `POST /{app}/assign-specialists/{level}` | Ejecutar dispatch WDD para un nivel |
+| `GET /{app}/assignments` | Consultar asignaciones con filtros |
+
+---
+
+## Configuracion
+
+| Archivo | Contenido |
+|---------|-----------|
+| `.env` | Credenciales de Outlook por aplicacion, URL de PostgreSQL |
+| `storage/config.json` | Configuracion del navegador (viewport, headless, user agent) |
+| `storage/scraping_config.json` | Parametros del loop de scroll, timeouts |
+
+---
+
+## Problemas conocidos
+
+- **Virtual scroll**: Outlook solo mantiene ~15-20 filas en el DOM. Filas que salen del viewport durante el scraping pueden perderse en la extraccion de cuerpo.
+- **Filtro no critico**: si Outlook cambia el selector del boton de filtro, el scraping continua sin filtrar (extrae todos los correos, no solo no leidos).
+- **Dark mode**: el HTML extraido puede tener colores de texto blancos y atributos `data-ogsc` de Outlook en modo oscuro.

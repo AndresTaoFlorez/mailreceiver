@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from api.config import STORAGE_PATH
+from api.presentation.config import STORAGE_PATH
 
 SCRAPING_CONFIG_PATH: Path = STORAGE_PATH / "scraping_config.json"
 

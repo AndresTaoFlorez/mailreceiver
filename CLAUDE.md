@@ -13,10 +13,10 @@ Two-service RPA system that scrapes emails from Outlook Web (outlook.office.com)
 
 ```bash
 # Activate venv first, then one command starts both services:
-litestar --app api.app:app run --reload
+litestar --app api.presentation.app:app run --reload
 
 # If litestar launcher is broken on Windows, use:
-python -m litestar --app api.app:app run --reload
+python -m litestar --app api.presentation.app:app run --reload
 
 # Agent standalone (for debugging):
 python -m agent --port 8001 --reload
@@ -29,18 +29,43 @@ The API's `on_startup` hook auto-starts the Agent as a subprocess via `AgentMana
 
 **Windows note:** The Agent launcher (`agent/__main__.py`) sets `WindowsProactorEventLoopPolicy` required by Playwright. Don't bypass it with plain `uvicorn agent.core:app`.
 
-## Architecture
+## Architecture (Clean Architecture layers)
+
+```
+api/                    → Shared business logic + presentation
+  presentation/         → Presentation layer: REST API (Litestar, port 8000)
+    app.py              → Litestar app entry point
+    config.py           → App config, credentials, paths
+    agent_manager.py    → Agent subprocess manager
+    routes/             → Litestar controllers (HTTP in/out)
+  application/          → Use cases (dispatcher orchestrates domain + infrastructure)
+  domain/               → Core domain (ORM models, request schemas, mappers)
+  infrastructure/       → Persistence (database engine, all repository modules)
+  shared/               → Cross-cutting (logger)
+agent/                  → Service: Browser automation (Playwright, port 8001)
+wdd/                    → Standalone algorithm (Weighted Deficit Dispatch, pure Python)
+```
+
+### Key conventions
+
+- **api/domain/models.py**: SQLAlchemy ORM models (the single source of truth for DB schema)
+- **api/domain/schemas.py**: Pydantic models for **request validation only** (Create/Update DTOs)
+- **api/domain/mappers.py**: ORM → dict converters + response envelope helpers (`ok()`, `ok_list()`, `ok_page()`)
+- **api/infrastructure/*.py**: One repository file per table, all async with `AsyncSession`
+- **api/infrastructure/database.py**: PostgreSQL engine + `async_session` factory
+- **api/application/dispatcher.py**: Orchestrates WDD engine with DB repositories
+- Routes never import from `domain` repositories (those live in `api/infrastructure/`)
 
 ### Request flow
 
 ```
-POST /{app}/unread-conversations (api/routes/tutela_en_linea.py)
+POST /{app}/unread-conversations (api/presentation/routes/app_controller.py)
   → AgentManager.ensure_running()
   → HTTP POST to Agent at localhost:8001/process
     → Pipeline 1 (login): LoginStep
     → Pipeline 2 (scrape): NavigateFolderStep → FilterUnreadStep → ScrapeConversationsStep → ExtractBodyStep
     → save_conversations() → PostgreSQL upsert
-  → Query PostgreSQL → return paginated response
+  → Query PostgreSQL → return response
 ```
 
 ### Pipeline system
@@ -61,19 +86,15 @@ Steps are orchestrated by `StepPipeline` (`agent/browser/pipeline.py`).
 
 ### Browser sessions
 
-`SessionManager` (`agent/browser/session.py`) manages one Chromium instance per application (e.g., `tutela_en_linea`, `justicia_xxi_web`). Sessions are created on demand and auto-restart if the browser dies. A per-app `asyncio.Lock` serializes concurrent requests.
+`SessionManager` (`agent/browser/session.py`) manages one Chromium instance per application. Sessions are created on demand and auto-restart if the browser dies. A per-app `asyncio.Lock` serializes concurrent requests.
 
 ### Outlook virtual scroll
 
 Outlook Web uses Virtuoso virtual scroll — only ~15-20 email rows exist in the DOM at any time. Step 4 scrolls and parses incrementally. Step 5 must scroll back to find rows by `data-convid` since they may have left the DOM.
 
-### Email parsing
-
-`agent/browser/utils/email_parser.py` extracts fields via a single JS evaluate call on each `[role="option"]` row: `conversation_id`, `subject`, `sender`, `sender_email`, `date`, `tags`.
-
 ## Database
 
-PostgreSQL (asyncpg + SQLAlchemy async). Models in `domain/models.py`. The `conversations` table has `UNIQUE(conversation_id)` — upsert logic in `domain/repository.py`.
+PostgreSQL (asyncpg + SQLAlchemy async). Models in `api/domain/models.py`. The `conversations` table has `UNIQUE(conversation_id)` — upsert logic in `api/infrastructure/email_repository.py`.
 
 ## Configuration
 
@@ -83,7 +104,7 @@ PostgreSQL (asyncpg + SQLAlchemy async). Models in `domain/models.py`. The `conv
 
 ## Deployment
 
-GitHub Actions on push to `main` → SSH to DigitalOcean droplet → `git pull && docker compose up -d --build`. Remote path: `/home/sample/tybacase_mailwindow`.
+See `DEPLOY.md`.
 
 ## Known issues
 

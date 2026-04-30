@@ -7,7 +7,8 @@ from litestar import Litestar, get
 
 from agent.browser.session import SessionManager
 from agent.routes.process import process_handler
-from shared.logger import get_logger
+from agent.routes.move import move_handler
+from api.shared.logger import get_logger
 
 logger = get_logger("agent")
 
@@ -29,7 +30,7 @@ async def agent_health() -> dict:
 
 
 app = Litestar(
-    route_handlers=[agent_health, process_handler],
+    route_handlers=[agent_health, process_handler, move_handler],
     lifespan=[lifespan],
     debug=True,
 )

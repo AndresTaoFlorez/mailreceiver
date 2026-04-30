@@ -6,7 +6,7 @@ from typing import Any
 
 from playwright.async_api import Page
 
-from shared.logger import get_logger
+from api.shared.logger import get_logger
 
 logger = get_logger("agent")
 

@@ -4,8 +4,8 @@ import asyncio
 
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 
-from api.config import get as cfg
-from shared.logger import get_logger
+from api.presentation.config import get as cfg
+from api.shared.logger import get_logger
 
 logger = get_logger("agent")
 
